@@ -87,37 +87,86 @@ class NpmPackageManager(BasePackageManager):
                 self.logger.error(error_msg)
                 return False, error_msg
 
-            # Update packages
-            if packages:
-                # Update specific packages
-                cmd = ["npm", "update"] + packages
-            else:
-                # Update all packages
-                cmd = ["npm", "update"]
+            # Get outdated packages to update
+            outdated = await self.get_outdated_packages()
+            if not outdated:
+                return True, "No outdated packages to update"
 
-            update_result = subprocess.run(
-                cmd,
+            # Read package.json
+            package_json_path = self.repo_path / "package.json"
+            if not package_json_path.exists():
+                return False, "package.json not found"
+
+            with open(package_json_path, 'r') as f:
+                package_data = json.load(f)
+
+            # Track which packages we're updating
+            updated_packages = []
+
+            # Update version specifiers in package.json for outdated packages
+            for pkg in outdated:
+                updated_in_deps = False
+                updated_in_dev_deps = False
+
+                # Check and update in dependencies
+                if "dependencies" in package_data and pkg.name in package_data["dependencies"]:
+                    old_version = package_data["dependencies"][pkg.name]
+                    package_data["dependencies"][pkg.name] = f"^{pkg.latest_version}"
+                    updated_packages.append(pkg.name)
+                    updated_in_deps = True
+                    self.logger.info(f"Updated {pkg.name} in dependencies: {old_version} -> ^{pkg.latest_version}")
+
+                # Check and update in devDependencies
+                if "devDependencies" in package_data and pkg.name in package_data["devDependencies"]:
+                    old_version = package_data["devDependencies"][pkg.name]
+                    package_data["devDependencies"][pkg.name] = f"^{pkg.latest_version}"
+                    if not updated_in_deps:
+                        updated_packages.append(pkg.name)
+                    updated_in_dev_deps = True
+                    self.logger.info(f"Updated {pkg.name} in devDependencies: {old_version} -> ^{pkg.latest_version}")
+
+                if not updated_in_deps and not updated_in_dev_deps:
+                    self.logger.warning(f"Package {pkg.name} not found in dependencies or devDependencies")
+
+            if not updated_packages:
+                return True, "No packages were updated in package.json"
+
+            # Write updated package.json
+            with open(package_json_path, 'w') as f:
+                json.dump(package_data, f, indent=2)
+                f.write('\n')  # Add newline at end of file
+
+            self.logger.info(f"Updated package.json with {len(updated_packages)} packages: {', '.join(updated_packages)}")
+
+            # Now run npm install to actually install the new versions
+            install_result = subprocess.run(
+                ["npm", "install"],
                 cwd=self.repo_path,
                 capture_output=True,
                 text=True,
                 timeout=300
             )
 
-            if update_result.returncode != 0:
-                error_msg = f"npm update failed: {update_result.stderr}"
+            if install_result.returncode != 0:
+                error_msg = f"npm install after update failed: {install_result.stderr}"
                 self.logger.error(error_msg)
                 return False, error_msg
 
-            output = f"STDOUT:\n{update_result.stdout}\n\nSTDERR:\n{update_result.stderr}"
-            self.logger.info("Successfully updated npm packages")
+            output = f"Updated {len(updated_packages)} packages: {', '.join(updated_packages)}\n\n"
+            output += f"STDOUT:\n{install_result.stdout}\n\nSTDERR:\n{install_result.stderr}"
+            self.logger.info(f"Successfully updated {len(updated_packages)} npm packages")
             return True, output
 
         except subprocess.TimeoutExpired:
-            error_msg = "npm update command timed out"
+            error_msg = "npm command timed out"
             self.logger.error(error_msg)
             return False, error_msg
         except FileNotFoundError:
             error_msg = "npm command not found"
+            self.logger.error(error_msg)
+            return False, error_msg
+        except json.JSONDecodeError as e:
+            error_msg = f"Failed to parse package.json: {e}"
             self.logger.error(error_msg)
             return False, error_msg
         except Exception as e:
