@@ -8,9 +8,13 @@ logger = get_logger(__name__)
 class GitHubService:
     """Service for GitHub API operations"""
 
-    def __init__(self, github_token: str):
-        self.github = Github(github_token)
+    def __init__(self, github_token: Optional[str]):
+        self.github = Github(github_token) if github_token else None
+        self.github_token = github_token
         self.logger = logger
+
+        if not github_token:
+            self.logger.warning("GitHub token not provided. PR creation will not be available.")
 
     def parse_repo_url(self, repo_url: str) -> Tuple[Optional[str], Optional[str]]:
         """

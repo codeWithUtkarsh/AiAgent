@@ -129,6 +129,11 @@ class NpmPackageManager(BasePackageManager):
         """Get lock file paths"""
         lockfiles = []
 
+        # Always include package.json first
+        if self.file_exists("package.json"):
+            lockfiles.append(self.repo_path / "package.json")
+
+        # Add lock files if they exist
         if self.file_exists("package-lock.json"):
             lockfiles.append(self.repo_path / "package-lock.json")
         if self.file_exists("yarn.lock"):
@@ -136,8 +141,7 @@ class NpmPackageManager(BasePackageManager):
         if self.file_exists("pnpm-lock.yaml"):
             lockfiles.append(self.repo_path / "pnpm-lock.yaml")
 
-        # Always include package.json
-        if self.file_exists("package.json"):
-            lockfiles.append(self.repo_path / "package.json")
+        # Log which files were found
+        self.logger.info(f"Found {len(lockfiles)} files to commit: {[f.name for f in lockfiles]}")
 
         return lockfiles

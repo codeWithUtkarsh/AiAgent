@@ -24,16 +24,17 @@ class UpdateOrchestrator:
 
     def __init__(
         self,
-        anthropic_api_key: str,
-        github_token: str,
+        anthropic_api_key: Optional[str],
+        github_token: Optional[str],
         workspace_dir: str,
         branch_prefix: str = "dependency-updates"
     ):
         self.git_service = GitService(workspace_dir)
-        self.github_service = GitHubService(github_token)
+        self.github_service = GitHubService(github_token) if github_token else None
         self.ai_agent = AnthropicAgent(anthropic_api_key)
         self.branch_prefix = branch_prefix
         self.logger = logger
+        self.github_token = github_token
 
         # Job tracking
         self.jobs: Dict[str, JobStatusResponse] = {}

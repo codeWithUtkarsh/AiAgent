@@ -9,10 +9,24 @@ logger = get_logger(__name__)
 class AnthropicAgent:
     """AI Agent using Anthropic's Claude for intelligent analysis"""
 
-    def __init__(self, api_key: str, model: str = "claude-3-5-sonnet-20241022"):
-        self.client = Anthropic(api_key=api_key)
+    def __init__(self, api_key: Optional[str], model: str = "claude-3-5-sonnet-20241022"):
+        self.api_key = api_key
         self.model = model
         self.logger = logger
+        self.client = None
+        self.ai_enabled = False
+
+        # Initialize client and check if AI is available
+        try:
+            if api_key and api_key != "your_anthropic_api_key_here":
+                self.client = Anthropic(api_key=api_key)
+                self.ai_enabled = True
+                self.logger.info("Anthropic AI initialized successfully")
+            else:
+                self.logger.warning("Anthropic API key not configured. AI features will be disabled.")
+        except Exception as e:
+            self.logger.error(f"Failed to initialize Anthropic client: {e}")
+            self.logger.warning("AI features will be disabled. Using fallback mode.")
 
     async def generate_pr_description(
         self,
@@ -31,6 +45,11 @@ class AnthropicAgent:
         Returns:
             Generated PR description in markdown format
         """
+        # If AI is not enabled, use fallback immediately
+        if not self.ai_enabled or not self.client:
+            self.logger.info("AI not available, using fallback PR description")
+            return self._generate_fallback_description(package_manager, outdated_packages)
+
         self.logger.info("Generating PR description using Claude")
 
         try:
@@ -131,6 +150,11 @@ This PR updates {len(outdated_packages)} dependencies in the {package_manager.va
         Returns:
             Analysis summary
         """
+        # If AI is not enabled, use simple summary
+        if not self.ai_enabled or not self.client:
+            self.logger.info("AI not available, using basic analysis")
+            return f"Found {len(outdated_packages)} packages to update. Review changes carefully before merging."
+
         self.logger.info("Analyzing package updates using Claude")
 
         try:

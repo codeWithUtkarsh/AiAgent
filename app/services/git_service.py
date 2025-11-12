@@ -110,11 +110,37 @@ class GitService:
             True if successful, False otherwise
         """
         try:
-            self.logger.info(f"Committing {len(files)} files")
+            # Filter out files that don't exist
+            existing_files = []
+            for file in files:
+                file_path = Path(file)
+                if file_path.exists():
+                    existing_files.append(file)
+                    self.logger.debug(f"Will commit: {file}")
+                else:
+                    self.logger.warning(f"Skipping non-existent file: {file}")
+
+            if not existing_files:
+                self.logger.warning("No files to commit")
+                return False
+
+            self.logger.info(f"Committing {len(existing_files)} files")
 
             # Add files
-            for file in files:
-                repo.index.add([str(file)])
+            for file in existing_files:
+                # Convert to relative path from repo root
+                repo_root = Path(repo.working_dir)
+                try:
+                    relative_path = Path(file).relative_to(repo_root)
+                    repo.index.add([str(relative_path)])
+                except ValueError:
+                    # If file is already relative or absolute path outside repo
+                    repo.index.add([str(file)])
+
+            # Check if there are any changes to commit
+            if not repo.index.diff("HEAD"):
+                self.logger.info("No changes to commit")
+                return True
 
             # Commit
             repo.index.commit(commit_message)

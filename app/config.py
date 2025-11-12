@@ -8,14 +8,14 @@ class Settings(BaseSettings):
     """Application configuration settings"""
 
     # Anthropic Configuration
-    anthropic_api_key: str = Field(..., env="ANTHROPIC_API_KEY")
+    anthropic_api_key: Optional[str] = Field(default=None, env="ANTHROPIC_API_KEY")
     anthropic_model: str = Field(
         default="claude-3-5-sonnet-20241022",
         env="ANTHROPIC_MODEL"
     )
 
     # GitHub Configuration
-    github_token: str = Field(..., env="GITHUB_TOKEN")
+    github_token: Optional[str] = Field(default=None, env="GITHUB_TOKEN")
 
     # Application Configuration
     app_host: str = Field(default="0.0.0.0", env="APP_HOST")
