@@ -27,6 +27,25 @@ class NpmPackageManager(BasePackageManager):
         self.logger.info("Checking for outdated npm packages")
 
         try:
+            # First, read package.json to get current version specifiers
+            package_json_path = self.repo_path / "package.json"
+            current_versions = {}
+
+            if package_json_path.exists():
+                with open(package_json_path, 'r') as f:
+                    package_data = json.load(f)
+
+                    # Get versions from dependencies
+                    if "dependencies" in package_data:
+                        for name, version in package_data["dependencies"].items():
+                            current_versions[name] = version
+
+                    # Get versions from devDependencies
+                    if "devDependencies" in package_data:
+                        for name, version in package_data["devDependencies"].items():
+                            if name not in current_versions:
+                                current_versions[name] = version
+
             # Run npm outdated --json
             result = subprocess.run(
                 ["npm", "outdated", "--json"],
@@ -45,9 +64,16 @@ class NpmPackageManager(BasePackageManager):
             packages = []
 
             for name, info in outdated_data.items():
+                # Try to get current version from multiple sources
+                current_version = (
+                    info.get("current") or  # From npm outdated
+                    current_versions.get(name) or  # From package.json
+                    "unknown"
+                )
+
                 packages.append(PackageInfo(
                     name=name,
-                    current_version=info.get("current", "unknown"),
+                    current_version=current_version,
                     latest_version=info.get("latest", "unknown"),
                     is_outdated=True
                 ))
