@@ -124,10 +124,12 @@ class NpmPackageManager(BasePackageManager):
                 return False, "package.json not found"
 
             with open(package_json_path, 'r') as f:
-                package_data = json.load(f)
+                original_content = f.read()
+                package_data = json.loads(original_content)
 
             # Track which packages we're updating
             updated_packages = []
+            actual_changes = False
 
             # Update version specifiers in package.json for outdated packages
             for pkg in outdated:
@@ -137,32 +139,59 @@ class NpmPackageManager(BasePackageManager):
                 # Check and update in dependencies
                 if "dependencies" in package_data and pkg.name in package_data["dependencies"]:
                     old_version = package_data["dependencies"][pkg.name]
-                    package_data["dependencies"][pkg.name] = f"^{pkg.latest_version}"
-                    updated_packages.append(pkg.name)
-                    updated_in_deps = True
-                    self.logger.info(f"Updated {pkg.name} in dependencies: {old_version} -> ^{pkg.latest_version}")
+                    new_version = f"^{pkg.latest_version}"
+
+                    # Only update if actually different
+                    if old_version != new_version:
+                        package_data["dependencies"][pkg.name] = new_version
+                        updated_packages.append(pkg.name)
+                        updated_in_deps = True
+                        actual_changes = True
+                        self.logger.info(f"Updated {pkg.name} in dependencies: {old_version} -> {new_version}")
+                    else:
+                        self.logger.info(f"Skipping {pkg.name} in dependencies: already at {old_version}")
 
                 # Check and update in devDependencies
                 if "devDependencies" in package_data and pkg.name in package_data["devDependencies"]:
                     old_version = package_data["devDependencies"][pkg.name]
-                    package_data["devDependencies"][pkg.name] = f"^{pkg.latest_version}"
-                    if not updated_in_deps:
-                        updated_packages.append(pkg.name)
-                    updated_in_dev_deps = True
-                    self.logger.info(f"Updated {pkg.name} in devDependencies: {old_version} -> ^{pkg.latest_version}")
+                    new_version = f"^{pkg.latest_version}"
+
+                    # Only update if actually different
+                    if old_version != new_version:
+                        package_data["devDependencies"][pkg.name] = new_version
+                        if not updated_in_deps:
+                            updated_packages.append(pkg.name)
+                        updated_in_dev_deps = True
+                        actual_changes = True
+                        self.logger.info(f"Updated {pkg.name} in devDependencies: {old_version} -> {new_version}")
+                    else:
+                        self.logger.info(f"Skipping {pkg.name} in devDependencies: already at {old_version}")
 
                 if not updated_in_deps and not updated_in_dev_deps:
                     self.logger.warning(f"Package {pkg.name} not found in dependencies or devDependencies")
 
             if not updated_packages:
-                return True, "No packages were updated in package.json"
+                return True, "No packages needed updates in package.json"
+
+            if not actual_changes:
+                self.logger.warning("No actual version changes detected in package.json")
+                return True, "Package versions already at target versions"
 
             # Write updated package.json
             with open(package_json_path, 'w') as f:
                 json.dump(package_data, f, indent=2)
                 f.write('\n')  # Add newline at end of file
 
+            # Verify the file was actually written differently
+            with open(package_json_path, 'r') as f:
+                new_content = f.read()
+
+            if original_content == new_content:
+                self.logger.error("package.json content did not change after write!")
+                return False, "Failed to update package.json - no changes written"
+
             self.logger.info(f"Updated package.json with {len(updated_packages)} packages: {', '.join(updated_packages)}")
+            self.logger.info(f"File size changed from {len(original_content)} to {len(new_content)} bytes")
 
             # Now run npm install to actually install the new versions
             install_result = subprocess.run(
