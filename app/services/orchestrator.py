@@ -200,6 +200,17 @@ class UpdateOrchestrator:
             if not success:
                 raise Exception(f"Package update failed: {output}")
 
+            # Check if the output indicates no actual changes
+            if "already at target versions" in output or "No packages needed updates" in output:
+                self.update_job_status(
+                    job_id,
+                    JobStatus.COMPLETED,
+                    f"Package versions already up to date. No changes needed. {output}",
+                    outdated_packages=outdated_packages
+                )
+                self.logger.info("Skipping PR creation - packages already at target versions")
+                return
+
             self.update_job_status(
                 job_id,
                 JobStatus.UPDATING,
