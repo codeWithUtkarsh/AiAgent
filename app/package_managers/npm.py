@@ -145,3 +145,7 @@ class NpmPackageManager(BasePackageManager):
         self.logger.info(f"Found {len(lockfiles)} files to commit: {[f.name for f in lockfiles]}")
 
         return lockfiles
+
+    def get_main_dependency_file(self) -> Optional[str]:
+        """Get the main dependency file"""
+        return "package.json"

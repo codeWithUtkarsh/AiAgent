@@ -144,3 +144,13 @@ class PipPackageManager(BasePackageManager):
             lockfiles.append(self.repo_path / "Pipfile.lock")
 
         return lockfiles
+
+    def get_main_dependency_file(self) -> Optional[str]:
+        """Get the main dependency file"""
+        if self.file_exists("pyproject.toml"):
+            return "pyproject.toml"
+        elif self.file_exists("requirements.txt"):
+            return "requirements.txt"
+        elif self.file_exists("Pipfile"):
+            return "Pipfile"
+        return None

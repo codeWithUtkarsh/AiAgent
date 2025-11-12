@@ -207,6 +207,25 @@ class UpdateOrchestrator:
                 updated_packages=outdated_packages
             )
 
+            # Step 6.5: Check if main dependency file changed
+            main_dep_file = package_manager.get_main_dependency_file()
+            if main_dep_file:
+                has_meaningful_changes = self.git_service.has_file_changed(repo, main_dep_file)
+
+                if not has_meaningful_changes:
+                    self.update_job_status(
+                        job_id,
+                        JobStatus.COMPLETED,
+                        f"No changes in {main_dep_file}. Only lock files updated (versions already satisfied by semver ranges). No PR needed.",
+                        outdated_packages=outdated_packages
+                    )
+                    self.logger.info(f"Skipping PR creation - {main_dep_file} has no changes")
+                    return
+
+                self.logger.info(f"Main dependency file {main_dep_file} has changes - proceeding with PR")
+            else:
+                self.logger.warning("Could not determine main dependency file, proceeding with commit")
+
             # Step 7: Commit changes
             lockfiles = package_manager.get_lockfile_paths()
             commit_message = await self.ai_agent.generate_commit_message(

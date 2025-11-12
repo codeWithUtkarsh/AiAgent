@@ -225,3 +225,69 @@ class GitService:
                 shutil.rmtree(repo_path)
         except Exception as e:
             self.logger.error(f"Error cleaning up repository: {e}")
+
+    def get_changed_files(self, repo: Repo) -> list:
+        """
+        Get list of files that have been modified in the working directory
+
+        Args:
+            repo: Git repository object
+
+        Returns:
+            List of changed file paths (relative to repo root)
+        """
+        try:
+            # Get all changed files (both staged and unstaged)
+            changed_files = []
+
+            # Check unstaged changes
+            for item in repo.index.diff(None):
+                changed_files.append(item.a_path)
+
+            # Check staged changes
+            for item in repo.index.diff("HEAD"):
+                if item.a_path not in changed_files:
+                    changed_files.append(item.a_path)
+
+            # Check untracked files
+            untracked = repo.untracked_files
+            changed_files.extend(untracked)
+
+            self.logger.info(f"Found {len(changed_files)} changed files: {changed_files}")
+            return changed_files
+
+        except Exception as e:
+            self.logger.error(f"Error getting changed files: {e}")
+            return []
+
+    def has_file_changed(self, repo: Repo, file_path: str) -> bool:
+        """
+        Check if a specific file has been modified
+
+        Args:
+            repo: Git repository object
+            file_path: Path to file (relative to repo root)
+
+        Returns:
+            True if file has changes, False otherwise
+        """
+        try:
+            changed_files = self.get_changed_files(repo)
+            # Normalize paths for comparison
+            file_path_normalized = Path(file_path).as_posix()
+
+            for changed_file in changed_files:
+                if Path(changed_file).as_posix() == file_path_normalized:
+                    self.logger.info(f"File has changed: {file_path}")
+                    return True
+                # Also check just the filename
+                if Path(changed_file).name == Path(file_path).name:
+                    self.logger.info(f"File has changed: {file_path}")
+                    return True
+
+            self.logger.info(f"File has NOT changed: {file_path}")
+            return False
+
+        except Exception as e:
+            self.logger.error(f"Error checking if file changed: {e}")
+            return False

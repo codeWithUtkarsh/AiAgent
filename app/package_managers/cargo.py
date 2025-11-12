@@ -110,3 +110,7 @@ class CargoPackageManager(BasePackageManager):
             lockfiles.append(self.repo_path / "Cargo.toml")
 
         return lockfiles
+
+    def get_main_dependency_file(self) -> Optional[str]:
+        """Get the main dependency file"""
+        return "Cargo.toml"

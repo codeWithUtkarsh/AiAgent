@@ -67,6 +67,21 @@ class BasePackageManager(ABC):
         """
         pass
 
+    @abstractmethod
+    def get_main_dependency_file(self) -> Optional[str]:
+        """
+        Get the main dependency file that contains version specifications
+
+        This is the file that should change when dependencies are updated.
+        For npm: package.json
+        For pip: requirements.txt
+        For cargo: Cargo.toml
+
+        Returns:
+            Filename of main dependency file (relative to repo root)
+        """
+        pass
+
     def file_exists(self, filename: str) -> bool:
         """Check if a file exists in the repository"""
         return (self.repo_path / filename).exists()
