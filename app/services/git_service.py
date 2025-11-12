@@ -127,15 +127,24 @@ class GitService:
             self.logger.info(f"Committing {len(existing_files)} files")
 
             # Add files
+            repo_root = Path(repo.working_dir).resolve()
             for file in existing_files:
-                # Convert to relative path from repo root
-                repo_root = Path(repo.working_dir)
                 try:
-                    relative_path = Path(file).relative_to(repo_root)
+                    # Convert file to absolute path first, then make it relative to repo root
+                    file_abs = Path(file).resolve()
+                    relative_path = file_abs.relative_to(repo_root)
                     repo.index.add([str(relative_path)])
-                except ValueError:
-                    # If file is already relative or absolute path outside repo
-                    repo.index.add([str(file)])
+                    self.logger.debug(f"Added to git index: {relative_path}")
+                except ValueError as e:
+                    # File is outside repo, try adding as-is
+                    self.logger.warning(f"Could not make path relative, adding as-is: {file} - {e}")
+                    try:
+                        # Try just the filename if it's in the repo root
+                        filename = Path(file).name
+                        repo.index.add([filename])
+                        self.logger.debug(f"Added to git index: {filename}")
+                    except Exception as inner_e:
+                        self.logger.error(f"Failed to add file to git index: {file} - {inner_e}")
 
             # Check if there are any changes to commit
             if not repo.index.diff("HEAD"):
