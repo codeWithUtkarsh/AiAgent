@@ -119,14 +119,17 @@ class UpdateOrchestrator:
                 "Repository cloned successfully"
             )
 
-            # Step 2: Detect package manager
+            # Step 2: Detect package manager (using AI if available)
             self.update_job_status(
                 job_id,
                 JobStatus.DETECTING,
-                "Detecting package manager"
+                "Detecting package manager using AI-powered analysis" if self.ai_agent.ai_enabled else "Detecting package manager"
             )
 
-            package_manager = PackageManagerDetector.detect(repo_path)
+            package_manager = PackageManagerDetector.detect(
+                repo_path,
+                anthropic_api_key=self.ai_agent.api_key if self.ai_agent.ai_enabled else None
+            )
 
             if not package_manager:
                 raise Exception("No supported package manager detected")
