@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Optional, List
 from app.models import PackageManager
 from app.package_managers.base import BasePackageManager
-from app.package_managers.go_mod import GoPackageManager
+from app.package_managers.generic import GenericPackageManager
 from app.package_managers.ai_detector import AIPackageManagerDetector
 from app.logger import get_logger
 
@@ -11,21 +11,16 @@ logger = get_logger(__name__)
 
 class PackageManagerDetector:
     """
-    AI-powered package manager detector.
+    Pure AI-powered package manager detector.
 
-    Uses Claude AI to analyze repository structure and identify dependency files
-    without any hardcoded mappings. The AI determines:
-    - The dependency file (package.json, go.mod, requirements.txt, Cargo.toml, etc.)
-    - The package manager and programming language
-    - How to handle updates
+    Uses Claude AI to analyze repository structure and identify dependency files,
+    then creates a GenericPackageManager that handles everything dynamically:
+    - Parses dependencies using AI
+    - Searches for latest versions using web search
+    - Updates dependency files using AI
 
-    Currently only Go modules has a dedicated implementation.
+    No hardcoded package manager implementations needed!
     """
-
-    # Only supported implementations (can be extended)
-    SUPPORTED_FILES = {
-        'go.mod': GoPackageManager,
-    }
 
     def __init__(self, anthropic_api_key: Optional[str] = None):
         """
@@ -50,7 +45,7 @@ class PackageManagerDetector:
             anthropic_api_key: Anthropic API key for AI detection (required)
 
         Returns:
-            Appropriate package manager instance or None if not detected
+            GenericPackageManager instance configured for the detected dependency file
         """
         detector = cls(anthropic_api_key)
         return detector._detect_internal(repo_path)
@@ -73,7 +68,7 @@ class PackageManagerDetector:
 
         pm_instance = self._create_package_manager_from_ai(repo_path, ai_result)
         if pm_instance:
-            logger.info(f"✓ AI detected package manager: {pm_instance.get_package_manager_type().value}")
+            logger.info(f"✓ AI detected dependency file: {ai_result.get('dependency_file')}")
             return pm_instance
         else:
             logger.error("Could not create package manager from AI detection result")
@@ -109,14 +104,14 @@ class PackageManagerDetector:
         ai_result: dict
     ) -> Optional[BasePackageManager]:
         """
-        Create package manager instance from AI detection result
+        Create GenericPackageManager instance from AI detection result
 
         Args:
             repo_path: Repository path
-            ai_result: Result from AI detection containing 'dependency_file'
+            ai_result: Result from AI detection containing 'dependency_file', 'package_manager', 'language'
 
         Returns:
-            Package manager instance or None
+            GenericPackageManager instance or None
         """
         dependency_file = ai_result.get('dependency_file', '')
         pm_name = ai_result.get('package_manager', '').lower()
@@ -136,23 +131,26 @@ class PackageManagerDetector:
 
         logger.info(f"✓ Dependency file exists: {dependency_file}")
 
-        # Check if we have an implementation for this dependency file
-        if dependency_file in self.SUPPORTED_FILES:
-            pm_class = self.SUPPORTED_FILES[dependency_file]
-            pm_instance = pm_class(repo_path)
+        # Create GenericPackageManager for any dependency file
+        try:
+            pm_instance = GenericPackageManager(
+                repo_path=repo_path,
+                dependency_file=dependency_file,
+                package_manager_name=pm_name,
+                language=language,
+                anthropic_api_key=self.anthropic_api_key
+            )
 
             # Verify detection is correct
             if pm_instance.detect():
-                logger.info(f"✓ Successfully created package manager from dependency file: {dependency_file}")
+                logger.info(f"✓ Successfully created GenericPackageManager for {dependency_file}")
                 return pm_instance
             else:
-                logger.warning(f"Dependency file exists but package manager verification failed")
+                logger.error(f"Dependency file verification failed for {dependency_file}")
                 return None
-        else:
-            logger.error(
-                f"AI identified '{dependency_file}' ({pm_name}) but no implementation exists yet. "
-                f"Currently supported: {list(self.SUPPORTED_FILES.keys())}"
-            )
+
+        except Exception as e:
+            logger.error(f"Error creating GenericPackageManager: {e}")
             return None
 
     @classmethod
@@ -174,6 +172,6 @@ class PackageManagerDetector:
         detector = cls(anthropic_api_key)
 
         # For now, just return single detection
-        # TODO: Implement monorepo support
+        # TODO: Implement monorepo support with AI
         pm = detector._detect_internal(repo_path)
         return [pm] if pm else []

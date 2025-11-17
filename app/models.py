@@ -8,10 +8,10 @@ class PackageManager(str, Enum):
     """
     Package managers detected by AI.
 
-    Currently only Go modules has dedicated implementation.
-    Other package managers can be detected by AI but require implementation.
+    All package managers are handled by GenericPackageManager which uses AI
+    to parse, search, and update any dependency file format.
     """
-    GO_MOD = "go"
+    GENERIC = "generic"
     UNKNOWN = "unknown"
 
 
