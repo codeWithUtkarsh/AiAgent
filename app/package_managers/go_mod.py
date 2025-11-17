@@ -210,8 +210,16 @@ class GoPackageManager(BasePackageManager):
             return current != latest
 
     async def update_packages(self, packages: Optional[List[str]] = None) -> Tuple[bool, str]:
-        """Update go packages"""
-        self.logger.info("Updating go packages")
+        """
+        Update go packages by directly modifying go.mod file
+
+        This method:
+        1. Reads go.mod file
+        2. Gets list of outdated packages
+        3. Updates version numbers in go.mod content
+        4. Writes updated content back to go.mod
+        """
+        self.logger.info("Updating go packages by modifying go.mod")
 
         try:
             # Get outdated packages to update
@@ -219,7 +227,7 @@ class GoPackageManager(BasePackageManager):
             if not outdated:
                 return True, "No outdated packages to update"
 
-            # Read go.mod to verify current state
+            # Read go.mod
             go_mod_path = self.repo_path / "go.mod"
             if not go_mod_path.exists():
                 return False, "go.mod not found"
@@ -227,71 +235,60 @@ class GoPackageManager(BasePackageManager):
             with open(go_mod_path, 'r') as f:
                 original_content = f.read()
 
+            # Make a copy to modify
+            updated_content = original_content
             updated_packages = []
             outputs = []
+            actual_changes = False
 
-            # Update each package
+            # Update each package version in the file
             for pkg in outdated:
                 if packages and pkg.name not in packages:
                     continue
 
-                self.logger.info(f"Updating {pkg.name} from {pkg.current_version} to {pkg.latest_version}")
+                self.logger.info(f"Updating {pkg.name} from v{pkg.current_version} to v{pkg.latest_version}")
 
-                # Use go get to update specific package
-                result = subprocess.run(
-                    ["go", "get", f"{pkg.name}@{pkg.latest_version}"],
-                    cwd=self.repo_path,
-                    capture_output=True,
-                    text=True,
-                    timeout=300
+                # Pattern to match the package line in go.mod
+                # Matches: "package_name v1.2.3" and replaces with "package_name v1.2.4"
+                old_version = pkg.current_version.lstrip('v')
+                new_version = pkg.latest_version.lstrip('v')
+
+                # Create regex pattern that matches the package line
+                # Handle both formats: "pkg v1.2.3" and "pkg v1.2.3 // indirect"
+                pattern = re.compile(
+                    rf'({re.escape(pkg.name)}\s+)v{re.escape(old_version)}(\s|$|//)',
+                    re.MULTILINE
                 )
 
-                if result.returncode == 0:
+                # Replace the version
+                new_content, count = pattern.subn(rf'\1v{new_version}\2', updated_content)
+
+                if count > 0:
+                    updated_content = new_content
                     updated_packages.append(pkg.name)
-                    outputs.append(f"✓ Updated {pkg.name} to {pkg.latest_version}")
-                    self.logger.info(f"Successfully updated {pkg.name}")
+                    actual_changes = True
+                    outputs.append(f"✓ Updated {pkg.name}: v{old_version} → v{new_version}")
+                    self.logger.info(f"Successfully updated {pkg.name} in go.mod")
                 else:
-                    outputs.append(f"✗ Failed to update {pkg.name}: {result.stderr}")
-                    self.logger.warning(f"Failed to update {pkg.name}: {result.stderr}")
+                    outputs.append(f"⚠ Could not find {pkg.name} v{old_version} in go.mod")
+                    self.logger.warning(f"Could not find pattern for {pkg.name} in go.mod")
 
-            if not updated_packages:
-                return True, "No packages were successfully updated"
-
-            # Run go mod tidy to clean up
-            tidy_result = subprocess.run(
-                ["go", "mod", "tidy"],
-                cwd=self.repo_path,
-                capture_output=True,
-                text=True,
-                timeout=120
-            )
-
-            if tidy_result.returncode != 0:
-                self.logger.warning(f"go mod tidy had issues: {tidy_result.stderr}")
-                outputs.append(f"⚠ go mod tidy warning: {tidy_result.stderr}")
-
-            # Verify go.mod was actually changed
-            with open(go_mod_path, 'r') as f:
-                new_content = f.read()
-
-            if original_content == new_content:
-                self.logger.warning("go.mod content did not change after updates")
+            if not actual_changes:
+                self.logger.warning("No actual changes made to go.mod")
                 return True, "Package versions already at target versions"
+
+            # Write updated content back to go.mod
+            with open(go_mod_path, 'w') as f:
+                f.write(updated_content)
 
             self.logger.info(f"Updated go.mod with {len(updated_packages)} packages")
 
-            output = f"Updated {len(updated_packages)} packages: {', '.join(updated_packages)}\n\n"
+            output = f"Updated {len(updated_packages)} packages in go.mod:\n\n"
             output += "\n".join(outputs)
+            output += f"\n\nNote: go.sum will be regenerated when you run 'go mod tidy' or build the project."
+
             return True, output
 
-        except FileNotFoundError:
-            error_msg = "go command not found"
-            self.logger.error(error_msg)
-            return False, error_msg
-        except subprocess.TimeoutExpired:
-            error_msg = "go command timed out"
-            self.logger.error(error_msg)
-            return False, error_msg
         except Exception as e:
             error_msg = f"Error updating packages: {e}"
             self.logger.error(error_msg)
