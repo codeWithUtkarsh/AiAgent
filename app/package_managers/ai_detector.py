@@ -157,7 +157,7 @@ Important: Focus on identifying the MAIN dependency file, not lock files."""
             self.logger.info("Analyzing repository with AI...")
 
             message = self.client.messages.create(
-                model="claude-3-5-sonnet-20241022",
+                model="claude-sonnet-4-5-20250929",
                 max_tokens=500,
                 messages=[
                     {

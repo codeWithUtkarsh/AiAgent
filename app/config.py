@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     # Anthropic Configuration
     anthropic_api_key: Optional[str] = Field(default=None, env="ANTHROPIC_API_KEY")
     anthropic_model: str = Field(
-        default="claude-3-5-sonnet-20241022",
+        default="claude-sonnet-4-5-20250929",
         env="ANTHROPIC_MODEL"
     )
 

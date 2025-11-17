@@ -9,7 +9,7 @@ logger = get_logger(__name__)
 class AnthropicAgent:
     """AI Agent using Anthropic's Claude for intelligent analysis"""
 
-    def __init__(self, api_key: Optional[str], model: str = "claude-3-5-sonnet-20241022"):
+    def __init__(self, api_key: Optional[str], model: str = "claude-sonnet-4-5-20250929"):
         self.api_key = api_key
         self.model = model
         self.logger = logger
