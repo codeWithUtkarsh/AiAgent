@@ -226,7 +226,7 @@ REASONING: <brief explanation>
             'cargo': ['cargo', 'rust'],
             'maven': ['maven', 'mvn'],
             'gradle': ['gradle'],
-            'go': ['go', 'golang', 'go modules'],
+            'go': ['go', 'golang', 'go modules', 'gomod'],
             'composer': ['composer', 'php'],
             'gem': ['gem', 'bundler', 'ruby'],
             'mix': ['mix', 'elixir'],

@@ -5,6 +5,7 @@ from app.package_managers.base import BasePackageManager
 from app.package_managers.npm import NpmPackageManager
 from app.package_managers.pip import PipPackageManager
 from app.package_managers.cargo import CargoPackageManager
+from app.package_managers.go_mod import GoPackageManager
 from app.package_managers.ai_detector import AIPackageManagerDetector
 from app.logger import get_logger
 
@@ -25,6 +26,7 @@ class PackageManagerDetector:
         NpmPackageManager,
         PipPackageManager,
         CargoPackageManager,
+        GoPackageManager,
     ]
 
     # Mapping from AI-detected names to implementation classes
@@ -40,6 +42,10 @@ class PackageManagerDetector:
         'python': PipPackageManager,
         'cargo': CargoPackageManager,
         'rust': CargoPackageManager,
+        'go': GoPackageManager,
+        'golang': GoPackageManager,
+        'go modules': GoPackageManager,
+        'gomod': GoPackageManager,
     }
 
     def __init__(self, anthropic_api_key: Optional[str] = None):
