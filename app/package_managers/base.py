@@ -45,12 +45,19 @@ class BasePackageManager(ABC):
         pass
 
     @abstractmethod
-    async def update_packages(self, packages: Optional[List[str]] = None) -> Tuple[bool, str]:
+    async def update_packages(
+        self,
+        packages: Optional[List[str]] = None,
+        outdated_packages: Optional[List[PackageInfo]] = None
+    ) -> Tuple[bool, str]:
         """
         Update packages
 
         Args:
             packages: List of package names to update. If None, update all.
+            outdated_packages: Pre-fetched list of outdated packages. If provided,
+                             this will be used instead of calling get_outdated_packages()
+                             again, avoiding duplicate work.
 
         Returns:
             Tuple of (success: bool, output: str)

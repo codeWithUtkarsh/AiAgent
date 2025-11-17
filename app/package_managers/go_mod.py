@@ -209,21 +209,31 @@ class GoPackageManager(BasePackageManager):
             # If we can't parse, assume it's different and thus outdated
             return current != latest
 
-    async def update_packages(self, packages: Optional[List[str]] = None) -> Tuple[bool, str]:
+    async def update_packages(
+        self,
+        packages: Optional[List[str]] = None,
+        outdated_packages: Optional[List[PackageInfo]] = None
+    ) -> Tuple[bool, str]:
         """
         Update go packages by directly modifying go.mod file
 
         This method:
         1. Reads go.mod file
-        2. Gets list of outdated packages
+        2. Gets list of outdated packages (or uses provided list)
         3. Updates version numbers in go.mod content
         4. Writes updated content back to go.mod
         """
         self.logger.info("Updating go packages by modifying go.mod")
 
         try:
-            # Get outdated packages to update
-            outdated = await self.get_outdated_packages()
+            # Use provided outdated packages or fetch them
+            if outdated_packages is not None:
+                self.logger.info(f"Using provided list of {len(outdated_packages)} outdated packages")
+                outdated = outdated_packages
+            else:
+                self.logger.info("Fetching outdated packages...")
+                outdated = await self.get_outdated_packages()
+
             if not outdated:
                 return True, "No outdated packages to update"
 

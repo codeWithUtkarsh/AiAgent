@@ -198,7 +198,10 @@ class UpdateOrchestrator:
                 "Updating packages"
             )
 
-            success, output = await package_manager.update_packages()
+            # Pass the already-fetched outdated packages to avoid duplicate work
+            success, output = await package_manager.update_packages(
+                outdated_packages=outdated_packages
+            )
 
             if not success:
                 raise Exception(f"Package update failed: {output}")

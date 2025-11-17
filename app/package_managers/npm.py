@@ -94,7 +94,11 @@ class NpmPackageManager(BasePackageManager):
             self.logger.error(f"Error checking outdated packages: {e}")
             return []
 
-    async def update_packages(self, packages: Optional[List[str]] = None) -> Tuple[bool, str]:
+    async def update_packages(
+        self,
+        packages: Optional[List[str]] = None,
+        outdated_packages: Optional[List[PackageInfo]] = None
+    ) -> Tuple[bool, str]:
         """Update npm packages"""
         self.logger.info("Updating npm packages")
 
@@ -113,8 +117,14 @@ class NpmPackageManager(BasePackageManager):
                 self.logger.error(error_msg)
                 return False, error_msg
 
-            # Get outdated packages to update
-            outdated = await self.get_outdated_packages()
+            # Use provided outdated packages or fetch them
+            if outdated_packages is not None:
+                self.logger.info(f"Using provided list of {len(outdated_packages)} outdated packages")
+                outdated = outdated_packages
+            else:
+                self.logger.info("Fetching outdated packages...")
+                outdated = await self.get_outdated_packages()
+
             if not outdated:
                 return True, "No outdated packages to update"
 

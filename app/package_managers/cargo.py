@@ -59,9 +59,14 @@ class CargoPackageManager(BasePackageManager):
             self.logger.error(f"Error checking outdated packages: {e}")
             return []
 
-    async def update_packages(self, packages: Optional[List[str]] = None) -> Tuple[bool, str]:
+    async def update_packages(
+        self,
+        packages: Optional[List[str]] = None,
+        outdated_packages: Optional[List[PackageInfo]] = None
+    ) -> Tuple[bool, str]:
         """Update cargo packages"""
         self.logger.info("Updating cargo packages")
+        # Note: cargo doesn't need outdated_packages since it uses cargo update command
 
         try:
             # Run cargo update
