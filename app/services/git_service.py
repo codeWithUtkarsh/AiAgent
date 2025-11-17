@@ -1,0 +1,293 @@
+import os
+import shutil
+from pathlib import Path
+from typing import Optional, Tuple
+from git import Repo, GitCommandError
+from app.logger import get_logger
+
+logger = get_logger(__name__)
+
+
+class GitService:
+    """Service for Git operations"""
+
+    def __init__(self, workspace_dir: str = "./workspace"):
+        self.workspace_dir = Path(workspace_dir)
+        self.workspace_dir.mkdir(parents=True, exist_ok=True)
+        self.logger = logger
+
+    def clone_repository(
+        self,
+        repo_url: str,
+        branch: Optional[str] = None
+    ) -> Tuple[Optional[Repo], Optional[Path]]:
+        """
+        Clone a repository to workspace
+
+        Args:
+            repo_url: Repository URL
+            branch: Branch to clone (optional)
+
+        Returns:
+            Tuple of (Repo object, Path to cloned repo)
+        """
+        try:
+            # Extract repo name from URL
+            repo_name = repo_url.rstrip('/').split('/')[-1].replace('.git', '')
+            clone_path = self.workspace_dir / repo_name
+
+            # Remove existing directory if it exists
+            if clone_path.exists():
+                self.logger.info(f"Removing existing repository at {clone_path}")
+                shutil.rmtree(clone_path)
+
+            self.logger.info(f"Cloning repository {repo_url} to {clone_path}")
+
+            # Clone repository
+            if branch:
+                repo = Repo.clone_from(
+                    repo_url,
+                    clone_path,
+                    branch=branch,
+                    depth=1
+                )
+            else:
+                repo = Repo.clone_from(repo_url, clone_path, depth=1)
+
+            self.logger.info(f"Successfully cloned repository to {clone_path}")
+            return repo, clone_path
+
+        except GitCommandError as e:
+            self.logger.error(f"Git error while cloning: {e}")
+            return None, None
+        except Exception as e:
+            self.logger.error(f"Error cloning repository: {e}")
+            return None, None
+
+    def create_branch(self, repo: Repo, branch_name: str) -> bool:
+        """
+        Create a new branch
+
+        Args:
+            repo: Git repository object
+            branch_name: Name of the branch to create
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            self.logger.info(f"Creating branch: {branch_name}")
+
+            # Create and checkout new branch
+            new_branch = repo.create_head(branch_name)
+            new_branch.checkout()
+
+            self.logger.info(f"Successfully created and checked out branch: {branch_name}")
+            return True
+
+        except GitCommandError as e:
+            self.logger.error(f"Git error while creating branch: {e}")
+            return False
+        except Exception as e:
+            self.logger.error(f"Error creating branch: {e}")
+            return False
+
+    def commit_changes(
+        self,
+        repo: Repo,
+        files: list,
+        commit_message: str
+    ) -> bool:
+        """
+        Commit changes to repository
+
+        Args:
+            repo: Git repository object
+            files: List of files to commit
+            commit_message: Commit message
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Filter out files that don't exist
+            existing_files = []
+            for file in files:
+                file_path = Path(file)
+                if file_path.exists():
+                    existing_files.append(file)
+                    self.logger.debug(f"Will commit: {file}")
+                else:
+                    self.logger.warning(f"Skipping non-existent file: {file}")
+
+            if not existing_files:
+                self.logger.warning("No files to commit")
+                return False
+
+            self.logger.info(f"Committing {len(existing_files)} files")
+
+            # Add files
+            repo_root = Path(repo.working_dir).resolve()
+            for file in existing_files:
+                try:
+                    # Convert file to absolute path first, then make it relative to repo root
+                    file_abs = Path(file).resolve()
+                    relative_path = file_abs.relative_to(repo_root)
+                    repo.index.add([str(relative_path)])
+                    self.logger.debug(f"Added to git index: {relative_path}")
+                except ValueError as e:
+                    # File is outside repo, try adding as-is
+                    self.logger.warning(f"Could not make path relative, adding as-is: {file} - {e}")
+                    try:
+                        # Try just the filename if it's in the repo root
+                        filename = Path(file).name
+                        repo.index.add([filename])
+                        self.logger.debug(f"Added to git index: {filename}")
+                    except Exception as inner_e:
+                        self.logger.error(f"Failed to add file to git index: {file} - {inner_e}")
+
+            # Check if there are any changes to commit
+            if not repo.index.diff("HEAD"):
+                self.logger.info("No changes to commit")
+                return True
+
+            # Commit
+            repo.index.commit(commit_message)
+
+            self.logger.info("Successfully committed changes")
+            return True
+
+        except GitCommandError as e:
+            self.logger.error(f"Git error while committing: {e}")
+            return False
+        except Exception as e:
+            self.logger.error(f"Error committing changes: {e}")
+            return False
+
+    def push_changes(
+        self,
+        repo: Repo,
+        branch_name: str,
+        github_token: Optional[str] = None
+    ) -> bool:
+        """
+        Push changes to remote repository
+
+        Args:
+            repo: Git repository object
+            branch_name: Branch name to push
+            github_token: GitHub token for authentication
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            self.logger.info(f"Pushing branch: {branch_name}")
+
+            # Set up authentication if token provided
+            if github_token:
+                # Get remote URL
+                origin = repo.remote('origin')
+                url = origin.url
+
+                # Add token to URL
+                if url.startswith('https://'):
+                    authenticated_url = url.replace(
+                        'https://',
+                        f'https://{github_token}@'
+                    )
+                    origin.set_url(authenticated_url)
+
+            # Push changes
+            origin = repo.remote('origin')
+            origin.push(refspec=f'{branch_name}:{branch_name}')
+
+            self.logger.info(f"Successfully pushed branch: {branch_name}")
+            return True
+
+        except GitCommandError as e:
+            self.logger.error(f"Git error while pushing: {e}")
+            return False
+        except Exception as e:
+            self.logger.error(f"Error pushing changes: {e}")
+            return False
+
+    def cleanup_repository(self, repo_path: Path):
+        """
+        Clean up cloned repository
+
+        Args:
+            repo_path: Path to repository to clean up
+        """
+        try:
+            if repo_path.exists():
+                self.logger.info(f"Cleaning up repository at {repo_path}")
+                shutil.rmtree(repo_path)
+        except Exception as e:
+            self.logger.error(f"Error cleaning up repository: {e}")
+
+    def get_changed_files(self, repo: Repo) -> list:
+        """
+        Get list of files that have been modified in the working directory
+
+        Args:
+            repo: Git repository object
+
+        Returns:
+            List of changed file paths (relative to repo root)
+        """
+        try:
+            # Get all changed files (both staged and unstaged)
+            changed_files = []
+
+            # Check unstaged changes
+            for item in repo.index.diff(None):
+                changed_files.append(item.a_path)
+
+            # Check staged changes
+            for item in repo.index.diff("HEAD"):
+                if item.a_path not in changed_files:
+                    changed_files.append(item.a_path)
+
+            # Check untracked files
+            untracked = repo.untracked_files
+            changed_files.extend(untracked)
+
+            self.logger.info(f"Found {len(changed_files)} changed files: {changed_files}")
+            return changed_files
+
+        except Exception as e:
+            self.logger.error(f"Error getting changed files: {e}")
+            return []
+
+    def has_file_changed(self, repo: Repo, file_path: str) -> bool:
+        """
+        Check if a specific file has been modified
+
+        Args:
+            repo: Git repository object
+            file_path: Path to file (relative to repo root)
+
+        Returns:
+            True if file has changes, False otherwise
+        """
+        try:
+            changed_files = self.get_changed_files(repo)
+            # Normalize paths for comparison
+            file_path_normalized = Path(file_path).as_posix()
+
+            for changed_file in changed_files:
+                if Path(changed_file).as_posix() == file_path_normalized:
+                    self.logger.info(f"File has changed: {file_path}")
+                    return True
+                # Also check just the filename
+                if Path(changed_file).name == Path(file_path).name:
+                    self.logger.info(f"File has changed: {file_path}")
+                    return True
+
+            self.logger.info(f"File has NOT changed: {file_path}")
+            return False
+
+        except Exception as e:
+            self.logger.error(f"Error checking if file changed: {e}")
+            return False
