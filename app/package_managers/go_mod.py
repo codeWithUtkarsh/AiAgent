@@ -1,4 +1,7 @@
 import subprocess
+import re
+import asyncio
+import aiohttp
 from pathlib import Path
 from typing import List, Optional, Tuple
 from app.models import PackageInfo, PackageManager
@@ -16,68 +19,195 @@ class GoPackageManager(BasePackageManager):
         """Get package manager type"""
         return PackageManager.GO_MOD
 
-    async def get_outdated_packages(self) -> List[PackageInfo]:
-        """Get outdated go packages"""
-        self.logger.info("Checking for outdated go packages")
+    def _parse_go_mod(self) -> List[Tuple[str, str]]:
+        """
+        Parse go.mod file to extract dependencies and their versions
+
+        Returns:
+            List of tuples (package_name, current_version)
+        """
+        go_mod_path = self.repo_path / "go.mod"
+        if not go_mod_path.exists():
+            return []
+
+        dependencies = []
 
         try:
-            # Get current module dependencies
-            result = subprocess.run(
-                ["go", "list", "-u", "-m", "-json", "all"],
-                cwd=self.repo_path,
-                capture_output=True,
-                text=True,
-                timeout=120
-            )
+            with open(go_mod_path, 'r') as f:
+                content = f.read()
 
-            if result.returncode != 0:
-                self.logger.error(f"go list command failed: {result.stderr}")
+            # Pattern to match require block and individual require statements
+            # Matches: github.com/package/name v1.2.3
+            version_pattern = re.compile(r'^\s*([^\s]+)\s+v([0-9]+\.[0-9]+\.[0-9]+[^\s]*)', re.MULTILINE)
+
+            matches = version_pattern.findall(content)
+
+            for package_name, version in matches:
+                # Skip commented lines and invalid entries
+                if not package_name.startswith('//') and '/' in package_name:
+                    dependencies.append((package_name, version))
+                    self.logger.debug(f"Found dependency: {package_name} v{version}")
+
+            self.logger.info(f"Parsed {len(dependencies)} dependencies from go.mod")
+            return dependencies
+
+        except Exception as e:
+            self.logger.error(f"Error parsing go.mod: {e}")
+            return []
+
+    async def _get_latest_version_from_pkgdev(self, package_name: str) -> Optional[str]:
+        """
+        Fetch the latest version of a Go package from pkg.go.dev
+
+        Args:
+            package_name: Full package name (e.g., github.com/gin-gonic/gin)
+
+        Returns:
+            Latest version string or None if not found
+        """
+        try:
+            url = f"https://pkg.go.dev/{package_name}"
+
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                    if response.status != 200:
+                        self.logger.warning(f"Failed to fetch {package_name}: HTTP {response.status}")
+                        return None
+
+                    html = await response.text()
+
+                    # Look for version in the HTML
+                    # pkg.go.dev shows versions in various formats, look for semantic version pattern
+                    # Usually in meta tags or version selectors
+                    version_patterns = [
+                        r'data-version="v([0-9]+\.[0-9]+\.[0-9]+[^"]*)"',
+                        r'Version: v([0-9]+\.[0-9]+\.[0-9]+[^\s<]*)',
+                        r'<span class="[^"]*Version[^"]*">v?([0-9]+\.[0-9]+\.[0-9]+[^<]*)</span>',
+                    ]
+
+                    for pattern in version_patterns:
+                        match = re.search(pattern, html)
+                        if match:
+                            version = match.group(1)
+                            self.logger.debug(f"Found latest version for {package_name}: v{version}")
+                            return version
+
+                    # Fallback: look for any version-like string in meta tags
+                    meta_pattern = r'<meta[^>]*content="v?([0-9]+\.[0-9]+\.[0-9]+[^"]*)"'
+                    matches = re.findall(meta_pattern, html)
+                    if matches:
+                        # Take the first one that looks like a semantic version
+                        for version in matches:
+                            if re.match(r'^[0-9]+\.[0-9]+\.[0-9]+', version):
+                                self.logger.debug(f"Found version in meta tag for {package_name}: v{version}")
+                                return version
+
+                    self.logger.warning(f"Could not find version for {package_name} in HTML")
+                    return None
+
+        except asyncio.TimeoutError:
+            self.logger.warning(f"Timeout fetching version for {package_name}")
+            return None
+        except Exception as e:
+            self.logger.error(f"Error fetching latest version for {package_name}: {e}")
+            return None
+
+    async def get_outdated_packages(self) -> List[PackageInfo]:
+        """
+        Get outdated go packages by searching pkg.go.dev
+
+        This method:
+        1. Parses go.mod to get current dependencies
+        2. Searches pkg.go.dev for each package to find latest version
+        3. Compares versions and returns outdated packages
+        """
+        self.logger.info("Checking for outdated go packages via pkg.go.dev")
+
+        try:
+            # Parse go.mod to get current dependencies
+            dependencies = self._parse_go_mod()
+
+            if not dependencies:
+                self.logger.warning("No dependencies found in go.mod")
                 return []
+
+            self.logger.info(f"Checking {len(dependencies)} dependencies for updates")
 
             packages = []
 
-            # Parse JSON output line by line (each line is a separate JSON object)
-            for line in result.stdout.strip().split('\n'):
-                if not line:
+            # Check each dependency for updates
+            for package_name, current_version in dependencies:
+                self.logger.info(f"Checking {package_name} (current: v{current_version})")
+
+                # Fetch latest version from pkg.go.dev
+                latest_version = await self._get_latest_version_from_pkgdev(package_name)
+
+                if latest_version is None:
+                    self.logger.warning(f"Could not determine latest version for {package_name}")
                     continue
 
-                try:
-                    import json
-                    module = json.loads(line)
+                # Compare versions (remove 'v' prefix if present for comparison)
+                current_clean = current_version.lstrip('v')
+                latest_clean = latest_version.lstrip('v')
 
-                    # Skip main module and modules without updates
-                    if module.get("Main"):
-                        continue
-
-                    path = module.get("Path", "")
-                    current_version = module.get("Version", "")
-                    update = module.get("Update")
-
-                    if update and update.get("Version"):
-                        latest_version = update["Version"]
-
+                if current_clean != latest_clean:
+                    # Simple version comparison - if they're different, consider it outdated
+                    # More sophisticated comparison could use semver library
+                    if self._is_version_outdated(current_clean, latest_clean):
                         packages.append(PackageInfo(
-                            name=path,
+                            name=package_name,
                             current_version=current_version,
                             latest_version=latest_version,
                             is_outdated=True
                         ))
-
-                except json.JSONDecodeError:
-                    continue
+                        self.logger.info(f"✓ {package_name}: v{current_version} → v{latest_version} (outdated)")
+                    else:
+                        self.logger.info(f"✓ {package_name}: v{current_version} is up to date or newer")
+                else:
+                    self.logger.info(f"✓ {package_name}: v{current_version} is up to date")
 
             self.logger.info(f"Found {len(packages)} outdated packages")
             return packages
 
-        except FileNotFoundError:
-            self.logger.error("go command not found")
-            return []
-        except subprocess.TimeoutExpired:
-            self.logger.error("go list command timed out")
-            return []
         except Exception as e:
             self.logger.error(f"Error checking outdated packages: {e}")
             return []
+
+    def _is_version_outdated(self, current: str, latest: str) -> bool:
+        """
+        Compare two semantic versions to determine if current is outdated
+
+        Args:
+            current: Current version (e.g., "1.2.3")
+            latest: Latest version (e.g., "1.3.0")
+
+        Returns:
+            True if current < latest
+        """
+        try:
+            # Split versions into parts
+            current_parts = [int(x.split('-')[0].split('+')[0]) for x in current.split('.')]
+            latest_parts = [int(x.split('-')[0].split('+')[0]) for x in latest.split('.')]
+
+            # Pad to same length
+            while len(current_parts) < len(latest_parts):
+                current_parts.append(0)
+            while len(latest_parts) < len(current_parts):
+                latest_parts.append(0)
+
+            # Compare major.minor.patch
+            for i in range(min(3, len(current_parts))):
+                if current_parts[i] < latest_parts[i]:
+                    return True
+                elif current_parts[i] > latest_parts[i]:
+                    return False
+
+            return False  # Versions are equal
+
+        except (ValueError, IndexError) as e:
+            self.logger.warning(f"Error comparing versions {current} and {latest}: {e}")
+            # If we can't parse, assume it's different and thus outdated
+            return current != latest
 
     async def update_packages(self, packages: Optional[List[str]] = None) -> Tuple[bool, str]:
         """Update go packages"""
