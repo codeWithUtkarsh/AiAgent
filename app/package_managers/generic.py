@@ -178,9 +178,11 @@ Important:
         current_version: Optional[str]
     ) -> Optional[str]:
         """
-        Use web search (MCP) to find latest version of a package
+        Fetch latest version from package registry by scraping the registry page
         """
-        # Build search query with package registry URL for grounding
+        import aiohttp
+
+        # Build package registry URL
         registry_urls = {
             'python': f'https://pypi.org/project/{package_name}/',
             'javascript': f'https://www.npmjs.com/package/{package_name}',
@@ -194,19 +196,46 @@ Important:
 
         package_url = registry_urls.get(self.language.lower(), '')
 
-        prompt = f"""Find the latest stable version of the {self.language} package "{package_name}".
+        if not package_url:
+            self.logger.warning(f"No registry URL configured for language: {self.language}")
+            return None
 
+        self.logger.info(f"Fetching latest version for {package_name} from {package_url}")
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(package_url, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                    if response.status != 200:
+                        self.logger.warning(f"Failed to fetch {package_url}: HTTP {response.status}")
+                        return None
+
+                    html = await response.text()
+
+            # Use AI to extract the latest version from HTML
+            prompt = f"""Extract the LATEST STABLE version number from this package registry page HTML.
+
+Package: {package_name}
+Language: {self.language}
 Current version: {current_version}
-Package URL: {package_url}
 
-Search the package registry and find the latest stable version number.
+HTML content (first 3000 chars):
+```
+{html[:3000]}
+```
+
+Find the latest stable version number (NOT pre-release, NOT beta, NOT rc).
+The version should be NEWER than the current version {current_version}.
+
 Return ONLY the version number in this format:
 VERSION: x.y.z
+
+Examples:
+VERSION: 1.4.2
+VERSION: 2.0.15
 
 Do not include 'v' prefix or any other text.
 """
 
-        try:
             message = self.ai_client.messages.create(
                 model="claude-sonnet-4-5-20250929",
                 max_tokens=200,
@@ -223,20 +252,74 @@ Do not include 'v' prefix or any other text.
                 if 'VERSION:' in line:
                     version = line.split('VERSION:')[1].strip()
                     version = version.lstrip('v')  # Remove v prefix if present
-                    self.logger.debug(f"Found latest version for {package_name}: {version}")
-                    return version
+
+                    # Validate that it's actually newer
+                    if self._is_version_newer(current_version, version):
+                        self.logger.info(f"Found latest version for {package_name}: {version}")
+                        return version
+                    else:
+                        self.logger.warning(
+                            f"AI returned {version} but it's not newer than {current_version}"
+                        )
+                        return None
 
             # Try to extract version with regex as fallback
             version_match = re.search(r'(\d+\.\d+\.\d+)', response_text)
             if version_match:
-                return version_match.group(1)
+                version = version_match.group(1)
+                if self._is_version_newer(current_version, version):
+                    return version
 
-            self.logger.warning(f"Could not extract version for {package_name} from AI response")
+            self.logger.warning(f"Could not extract valid newer version for {package_name}")
             return None
 
+        except aiohttp.ClientTimeout:
+            self.logger.warning(f"Timeout fetching version for {package_name}")
+            return None
         except Exception as e:
             self.logger.error(f"Error finding latest version for {package_name}: {e}")
             return None
+
+    def _is_version_newer(self, current: Optional[str], latest: str) -> bool:
+        """
+        Check if latest version is actually newer than current version
+
+        Args:
+            current: Current version string
+            latest: Latest version string
+
+        Returns:
+            True if latest > current
+        """
+        if not current or current == 'unknown' or current == 'latest':
+            return True
+
+        try:
+            # Parse version numbers
+            current_clean = current.lstrip('v').split('-')[0].split('+')[0]
+            latest_clean = latest.lstrip('v').split('-')[0].split('+')[0]
+
+            current_parts = [int(x) for x in current_clean.split('.')]
+            latest_parts = [int(x) for x in latest_clean.split('.')]
+
+            # Pad to same length
+            while len(current_parts) < len(latest_parts):
+                current_parts.append(0)
+            while len(latest_parts) < len(current_parts):
+                latest_parts.append(0)
+
+            # Compare
+            for i in range(len(current_parts)):
+                if latest_parts[i] > current_parts[i]:
+                    return True
+                elif latest_parts[i] < current_parts[i]:
+                    return False
+
+            return False  # Equal versions
+
+        except (ValueError, IndexError) as e:
+            self.logger.warning(f"Error comparing versions {current} and {latest}: {e}")
+            return True  # Assume it's newer if we can't parse
 
     async def update_packages(
         self,
