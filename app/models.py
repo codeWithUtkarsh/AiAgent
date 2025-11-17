@@ -5,17 +5,12 @@ from datetime import datetime
 
 
 class PackageManager(str, Enum):
-    """Supported package managers"""
-    NPM = "npm"
-    YARN = "yarn"
-    PNPM = "pnpm"
-    PIP = "pip"
-    POETRY = "poetry"
-    PIPENV = "pipenv"
-    CARGO = "cargo"
-    MAVEN = "maven"
-    GRADLE = "gradle"
-    COMPOSER = "composer"
+    """
+    Package managers detected by AI.
+
+    Currently only Go modules has dedicated implementation.
+    Other package managers can be detected by AI but require implementation.
+    """
     GO_MOD = "go"
     UNKNOWN = "unknown"
 

@@ -212,47 +212,11 @@ Important: Focus on identifying the MAIN dependency file, not lock files."""
                     elif 'reasoning' in key:
                         result['reasoning'] = value
 
-            # Must have either dependency_file or package_manager
-            if 'dependency_file' in result or 'package_manager' in result:
+            # Must have dependency_file to be valid
+            if 'dependency_file' in result:
                 return result
 
         except Exception as e:
             self.logger.error(f"Error parsing AI response: {e}")
 
         return None
-
-    def get_package_manager_name_variations(self, pm_name: str) -> List[str]:
-        """
-        Get variations of package manager names to handle different formats
-
-        Args:
-            pm_name: Package manager name from AI
-
-        Returns:
-            List of possible name variations
-        """
-        variations_map = {
-            'npm': ['npm', 'node', 'nodejs'],
-            'yarn': ['yarn'],
-            'pnpm': ['pnpm'],
-            'pip': ['pip', 'python'],
-            'poetry': ['poetry'],
-            'pipenv': ['pipenv'],
-            'cargo': ['cargo', 'rust'],
-            'maven': ['maven', 'mvn'],
-            'gradle': ['gradle'],
-            'go': ['go', 'golang', 'go modules', 'gomod'],
-            'composer': ['composer', 'php'],
-            'gem': ['gem', 'bundler', 'ruby'],
-            'mix': ['mix', 'elixir'],
-            'swift': ['swift', 'spm'],
-            'dart': ['dart', 'pub'],
-            'sbt': ['sbt', 'scala']
-        }
-
-        pm_lower = pm_name.lower()
-        for key, variations in variations_map.items():
-            if any(var in pm_lower for var in variations):
-                return variations
-
-        return [pm_lower]

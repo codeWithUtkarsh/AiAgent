@@ -2,9 +2,6 @@ from pathlib import Path
 from typing import Optional, List
 from app.models import PackageManager
 from app.package_managers.base import BasePackageManager
-from app.package_managers.npm import NpmPackageManager
-from app.package_managers.pip import PipPackageManager
-from app.package_managers.cargo import CargoPackageManager
 from app.package_managers.go_mod import GoPackageManager
 from app.package_managers.ai_detector import AIPackageManagerDetector
 from app.logger import get_logger
@@ -14,77 +11,43 @@ logger = get_logger(__name__)
 
 class PackageManagerDetector:
     """
-    Detects and creates appropriate package manager instances.
+    AI-powered package manager detector.
 
-    Supports two detection modes:
-    1. AI-powered detection using Claude (when API key available)
-    2. Rule-based detection using hardcoded patterns (fallback)
+    Uses Claude AI to analyze repository structure and identify dependency files
+    without any hardcoded mappings. The AI determines:
+    - The dependency file (package.json, go.mod, requirements.txt, Cargo.toml, etc.)
+    - The package manager and programming language
+    - How to handle updates
+
+    Currently only Go modules has a dedicated implementation.
     """
 
-    # Fallback hardcoded list - used when AI detection unavailable
-    PACKAGE_MANAGERS = [
-        NpmPackageManager,
-        PipPackageManager,
-        CargoPackageManager,
-        GoPackageManager,
-    ]
-
-    # Mapping from AI-detected names to implementation classes
-    PACKAGE_MANAGER_MAP = {
-        'npm': NpmPackageManager,
-        'yarn': NpmPackageManager,
-        'pnpm': NpmPackageManager,
-        'node': NpmPackageManager,
-        'nodejs': NpmPackageManager,
-        'pip': PipPackageManager,
-        'poetry': PipPackageManager,
-        'pipenv': PipPackageManager,
-        'python': PipPackageManager,
-        'cargo': CargoPackageManager,
-        'rust': CargoPackageManager,
-        'go': GoPackageManager,
-        'golang': GoPackageManager,
-        'go modules': GoPackageManager,
-        'gomod': GoPackageManager,
-    }
-
-    # Mapping from dependency files to package manager classes
-    DEPENDENCY_FILE_MAP = {
-        'package.json': NpmPackageManager,
-        'requirements.txt': PipPackageManager,
-        'pyproject.toml': PipPackageManager,
-        'Pipfile': PipPackageManager,
-        'Cargo.toml': CargoPackageManager,
+    # Only supported implementations (can be extended)
+    SUPPORTED_FILES = {
         'go.mod': GoPackageManager,
-        # Add more as needed for future package managers
-        'pom.xml': None,  # Java Maven - not yet implemented
-        'build.gradle': None,  # Java Gradle - not yet implemented
-        'composer.json': None,  # PHP Composer - not yet implemented
-        'Gemfile': None,  # Ruby Bundler - not yet implemented
-        'pubspec.yaml': None,  # Dart/Flutter - not yet implemented
-        'Package.swift': None,  # Swift Package Manager - not yet implemented
     }
 
     def __init__(self, anthropic_api_key: Optional[str] = None):
         """
-        Initialize detector with optional AI capabilities
+        Initialize detector with AI capabilities
 
         Args:
-            anthropic_api_key: Anthropic API key for AI-powered detection
+            anthropic_api_key: Anthropic API key for AI-powered detection (required)
         """
         self.ai_detector = AIPackageManagerDetector(anthropic_api_key) if anthropic_api_key else None
         self.anthropic_api_key = anthropic_api_key
 
+        if not anthropic_api_key or not self.ai_detector or not self.ai_detector.ai_enabled:
+            logger.warning("AI-powered detection requires an Anthropic API key")
+
     @classmethod
     def detect(cls, repo_path: Path, anthropic_api_key: Optional[str] = None) -> Optional[BasePackageManager]:
         """
-        Detect which package manager is used in the repository
-
-        Uses AI-powered detection when available, falls back to rule-based detection.
+        Detect which package manager is used in the repository using pure AI inference
 
         Args:
             repo_path: Path to the repository
-            anthropic_api_key: Optional Anthropic API key for AI detection
+            anthropic_api_key: Anthropic API key for AI detection (required)
 
         Returns:
             Appropriate package manager instance or None if not detected
@@ -93,24 +56,28 @@ class PackageManagerDetector:
         return detector._detect_internal(repo_path)
 
     def _detect_internal(self, repo_path: Path) -> Optional[BasePackageManager]:
-        """Internal detection logic"""
+        """Internal detection logic - purely AI-driven"""
         logger.info(f"Detecting package manager in {repo_path}")
 
-        # Try AI-powered detection first (if enabled)
-        if self.ai_detector and self.ai_detector.ai_enabled:
-            logger.info("Attempting AI-powered package manager detection")
-            ai_result = self._detect_with_ai_sync(repo_path)
-            if ai_result:
-                pm_instance = self._create_package_manager_from_ai(repo_path, ai_result)
-                if pm_instance:
-                    logger.info(f"✓ AI detected package manager: {pm_instance.get_package_manager_type().value}")
-                    return pm_instance
-                else:
-                    logger.warning("AI detection succeeded but couldn't create package manager instance")
+        # Require AI detection
+        if not self.ai_detector or not self.ai_detector.ai_enabled:
+            logger.error("AI detection is required but not available. Please provide Anthropic API key.")
+            return None
 
-        # Fall back to rule-based detection
-        logger.info("Using rule-based package manager detection")
-        return self._detect_with_rules(repo_path)
+        logger.info("Using AI-powered package manager detection")
+        ai_result = self._detect_with_ai_sync(repo_path)
+
+        if not ai_result:
+            logger.error("AI detection failed to identify package manager")
+            return None
+
+        pm_instance = self._create_package_manager_from_ai(repo_path, ai_result)
+        if pm_instance:
+            logger.info(f"✓ AI detected package manager: {pm_instance.get_package_manager_type().value}")
+            return pm_instance
+        else:
+            logger.error("Could not create package manager from AI detection result")
+            return None
 
     def _detect_with_ai_sync(self, repo_path: Path) -> Optional[dict]:
         """Synchronous wrapper for AI detection"""
@@ -146,88 +113,47 @@ class PackageManagerDetector:
 
         Args:
             repo_path: Repository path
-            ai_result: Result from AI detection containing 'dependency_file' and/or 'package_manager'
+            ai_result: Result from AI detection containing 'dependency_file'
 
         Returns:
             Package manager instance or None
         """
         dependency_file = ai_result.get('dependency_file', '')
         pm_name = ai_result.get('package_manager', '').lower()
+        language = ai_result.get('language', '')
 
-        logger.info(f"AI detection result - Dependency file: {dependency_file}, Package manager: {pm_name}")
+        logger.info(f"AI identified - File: {dependency_file}, Manager: {pm_name}, Language: {language}")
 
-        # PRIORITY 1: Try to use dependency_file if provided
-        if dependency_file:
-            logger.info(f"Attempting to detect via dependency file: {dependency_file}")
+        if not dependency_file:
+            logger.error("AI did not identify a dependency file")
+            return None
 
-            # Check if dependency file exists in repo
-            dep_file_path = repo_path / dependency_file
-            if dep_file_path.exists():
-                logger.info(f"✓ Dependency file exists: {dependency_file}")
+        # Check if dependency file exists in repo
+        dep_file_path = repo_path / dependency_file
+        if not dep_file_path.exists():
+            logger.error(f"AI identified '{dependency_file}' but it doesn't exist in repo")
+            return None
 
-                # Look up package manager class for this dependency file
-                if dependency_file in self.DEPENDENCY_FILE_MAP:
-                    pm_class = self.DEPENDENCY_FILE_MAP[dependency_file]
+        logger.info(f"✓ Dependency file exists: {dependency_file}")
 
-                    if pm_class is None:
-                        logger.warning(f"Dependency file '{dependency_file}' recognized but package manager not yet implemented")
-                        return None
-
-                    pm_instance = pm_class(repo_path)
-
-                    # Verify detection is correct
-                    if pm_instance.detect():
-                        logger.info(f"✓ Successfully created package manager from dependency file: {dependency_file}")
-                        return pm_instance
-                    else:
-                        logger.warning(f"Dependency file exists but package manager verification failed")
-                else:
-                    logger.warning(f"Dependency file '{dependency_file}' not in known mapping")
-            else:
-                logger.warning(f"AI suggested dependency file '{dependency_file}' but it doesn't exist in repo")
-
-        # PRIORITY 2: Fall back to package manager name
-        if pm_name:
-            logger.info(f"Attempting to detect via package manager name: {pm_name}")
-
-            # Try direct lookup
-            if pm_name in self.PACKAGE_MANAGER_MAP:
-                pm_class = self.PACKAGE_MANAGER_MAP[pm_name]
-                pm_instance = pm_class(repo_path)
-
-                # Verify detection is correct
-                if pm_instance.detect():
-                    logger.info(f"✓ Verified AI suggestion: {pm_name}")
-                    return pm_instance
-                else:
-                    logger.warning(f"AI suggested {pm_name} but verification failed")
-
-            # Try variations
-            if self.ai_detector:
-                variations = self.ai_detector.get_package_manager_name_variations(pm_name)
-                logger.info(f"Trying variations: {variations}")
-                for variation in variations:
-                    if variation in self.PACKAGE_MANAGER_MAP:
-                        pm_class = self.PACKAGE_MANAGER_MAP[variation]
-                        pm_instance = pm_class(repo_path)
-                        if pm_instance.detect():
-                            logger.info(f"✓ Verified AI suggestion via variation: {variation}")
-                            return pm_instance
-
-        logger.warning(f"Could not create package manager from AI detection (file: {dependency_file}, manager: {pm_name})")
-        return None
-
-    def _detect_with_rules(self, repo_path: Path) -> Optional[BasePackageManager]:
-        """Traditional rule-based detection"""
-        for pm_class in self.PACKAGE_MANAGERS:
+        # Check if we have an implementation for this dependency file
+        if dependency_file in self.SUPPORTED_FILES:
+            pm_class = self.SUPPORTED_FILES[dependency_file]
             pm_instance = pm_class(repo_path)
-            if pm_instance.detect():
-                pm_type = pm_instance.get_package_manager_type()
-                logger.info(f"✓ Rule-based detection found: {pm_type.value}")
-                return pm_instance
 
-        logger.warning("No package manager detected by rules")
-        return None
+            # Verify detection is correct
+            if pm_instance.detect():
+                logger.info(f"✓ Successfully created package manager from dependency file: {dependency_file}")
+                return pm_instance
+            else:
+                logger.warning(f"Dependency file exists but package manager verification failed")
+                return None
+        else:
+            logger.error(
+                f"AI identified '{dependency_file}' ({pm_name}) but no implementation exists yet. "
+                f"Currently supported: {list(self.SUPPORTED_FILES.keys())}"
+            )
+            return None
 
     @classmethod
     def get_all_package_managers(
@@ -240,25 +166,14 @@ class PackageManagerDetector:
 
         Args:
             repo_path: Path to the repository
-            anthropic_api_key: Optional Anthropic API key
+            anthropic_api_key: Anthropic API key
 
         Returns:
             List of detected package managers
         """
         detector = cls(anthropic_api_key)
 
-        # Check if AI detects monorepo
-        if detector.ai_detector and detector.ai_detector.ai_enabled:
-            ai_result = detector._detect_with_ai_sync(repo_path)
-            if ai_result and ai_result.get('is_monorepo'):
-                logger.info("✓ AI detected monorepo - scanning for multiple package managers")
-
-        # Scan all known package managers
-        managers = []
-        for pm_class in cls.PACKAGE_MANAGERS:
-            pm_instance = pm_class(repo_path)
-            if pm_instance.detect():
-                managers.append(pm_instance)
-
-        logger.info(f"Found {len(managers)} package manager(s) in repository")
-        return managers
+        # For now, just return single detection
+        # TODO: Implement monorepo support
+        pm = detector._detect_internal(repo_path)
+        return [pm] if pm else []
