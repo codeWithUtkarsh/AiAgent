@@ -48,6 +48,23 @@ class PackageManagerDetector:
         'gomod': GoPackageManager,
     }
 
+    # Mapping from dependency files to package manager classes
+    DEPENDENCY_FILE_MAP = {
+        'package.json': NpmPackageManager,
+        'requirements.txt': PipPackageManager,
+        'pyproject.toml': PipPackageManager,
+        'Pipfile': PipPackageManager,
+        'Cargo.toml': CargoPackageManager,
+        'go.mod': GoPackageManager,
+        # Add more as needed for future package managers
+        'pom.xml': None,  # Java Maven - not yet implemented
+        'build.gradle': None,  # Java Gradle - not yet implemented
+        'composer.json': None,  # PHP Composer - not yet implemented
+        'Gemfile': None,  # Ruby Bundler - not yet implemented
+        'pubspec.yaml': None,  # Dart/Flutter - not yet implemented
+        'Package.swift': None,  # Swift Package Manager - not yet implemented
+    }
+
     def __init__(self, anthropic_api_key: Optional[str] = None):
         """
         Initialize detector with optional AI capabilities
@@ -129,39 +146,75 @@ class PackageManagerDetector:
 
         Args:
             repo_path: Repository path
-            ai_result: Result from AI detection
+            ai_result: Result from AI detection containing 'dependency_file' and/or 'package_manager'
 
         Returns:
             Package manager instance or None
         """
+        dependency_file = ai_result.get('dependency_file', '')
         pm_name = ai_result.get('package_manager', '').lower()
-        logger.info(f"AI suggested package manager: {pm_name}")
 
-        # Try direct lookup
-        if pm_name in self.PACKAGE_MANAGER_MAP:
-            pm_class = self.PACKAGE_MANAGER_MAP[pm_name]
-            pm_instance = pm_class(repo_path)
+        logger.info(f"AI detection result - Dependency file: {dependency_file}, Package manager: {pm_name}")
 
-            # Verify detection is correct
-            if pm_instance.detect():
-                logger.info(f"✓ Verified AI suggestion: {pm_name}")
-                return pm_instance
-            else:
-                logger.warning(f"AI suggested {pm_name} but verification failed")
+        # PRIORITY 1: Try to use dependency_file if provided
+        if dependency_file:
+            logger.info(f"Attempting to detect via dependency file: {dependency_file}")
 
-        # Try variations
-        if self.ai_detector:
-            variations = self.ai_detector.get_package_manager_name_variations(pm_name)
-            logger.info(f"Trying variations: {variations}")
-            for variation in variations:
-                if variation in self.PACKAGE_MANAGER_MAP:
-                    pm_class = self.PACKAGE_MANAGER_MAP[variation]
+            # Check if dependency file exists in repo
+            dep_file_path = repo_path / dependency_file
+            if dep_file_path.exists():
+                logger.info(f"✓ Dependency file exists: {dependency_file}")
+
+                # Look up package manager class for this dependency file
+                if dependency_file in self.DEPENDENCY_FILE_MAP:
+                    pm_class = self.DEPENDENCY_FILE_MAP[dependency_file]
+
+                    if pm_class is None:
+                        logger.warning(f"Dependency file '{dependency_file}' recognized but package manager not yet implemented")
+                        return None
+
                     pm_instance = pm_class(repo_path)
-                    if pm_instance.detect():
-                        logger.info(f"✓ Verified AI suggestion via variation: {variation}")
-                        return pm_instance
 
-        logger.warning(f"Could not create package manager for AI-detected type: {pm_name}")
+                    # Verify detection is correct
+                    if pm_instance.detect():
+                        logger.info(f"✓ Successfully created package manager from dependency file: {dependency_file}")
+                        return pm_instance
+                    else:
+                        logger.warning(f"Dependency file exists but package manager verification failed")
+                else:
+                    logger.warning(f"Dependency file '{dependency_file}' not in known mapping")
+            else:
+                logger.warning(f"AI suggested dependency file '{dependency_file}' but it doesn't exist in repo")
+
+        # PRIORITY 2: Fall back to package manager name
+        if pm_name:
+            logger.info(f"Attempting to detect via package manager name: {pm_name}")
+
+            # Try direct lookup
+            if pm_name in self.PACKAGE_MANAGER_MAP:
+                pm_class = self.PACKAGE_MANAGER_MAP[pm_name]
+                pm_instance = pm_class(repo_path)
+
+                # Verify detection is correct
+                if pm_instance.detect():
+                    logger.info(f"✓ Verified AI suggestion: {pm_name}")
+                    return pm_instance
+                else:
+                    logger.warning(f"AI suggested {pm_name} but verification failed")
+
+            # Try variations
+            if self.ai_detector:
+                variations = self.ai_detector.get_package_manager_name_variations(pm_name)
+                logger.info(f"Trying variations: {variations}")
+                for variation in variations:
+                    if variation in self.PACKAGE_MANAGER_MAP:
+                        pm_class = self.PACKAGE_MANAGER_MAP[variation]
+                        pm_instance = pm_class(repo_path)
+                        if pm_instance.detect():
+                            logger.info(f"✓ Verified AI suggestion via variation: {variation}")
+                            return pm_instance
+
+        logger.warning(f"Could not create package manager from AI detection (file: {dependency_file}, manager: {pm_name})")
         return None
 
     def _detect_with_rules(self, repo_path: Path) -> Optional[BasePackageManager]:

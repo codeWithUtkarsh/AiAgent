@@ -116,7 +116,7 @@ class AIPackageManagerDetector:
             return None
 
         # Prepare prompt for Claude
-        prompt = f"""Analyze this repository structure and identify the package manager and project type.
+        prompt = f"""Analyze this repository structure and identify the PRIMARY dependency file where all dependencies are listed.
 
 Repository Structure:
 - Root files: {', '.join(structure['root_files'][:30])}
@@ -124,20 +124,34 @@ Repository Structure:
 - File extensions: {', '.join(structure['file_extensions'][:20])}
 - Dependency files found: {', '.join(structure['dependency_files'])}
 
-Based on this structure, determine:
-1. The PRIMARY package manager (npm, yarn, pnpm, pip, poetry, pipenv, cargo, maven, gradle, go, composer, gem, etc.)
-2. Your confidence level (high/medium/low)
-3. If it's a monorepo with multiple package managers
-4. The programming language/framework
+Your task is to identify the MAIN file that contains the dependency list for this repository.
+
+Examples of dependency files for different technologies:
+- JavaScript/Node.js: package.json
+- Python: requirements.txt, pyproject.toml, Pipfile
+- Rust: Cargo.toml
+- Go: go.mod
+- Java: pom.xml, build.gradle
+- PHP: composer.json
+- Ruby: Gemfile
+- .NET: *.csproj, packages.config
+- Dart/Flutter: pubspec.yaml
+- Swift: Package.swift
+
+Based on the repository structure above, determine:
+1. The PRIMARY dependency file name (the exact filename like "package.json", "requirements.txt", etc.)
+2. The package manager used with this file
+3. Your confidence level (high/medium/low)
+4. The programming language
 
 Respond in this exact format:
-PRIMARY_PACKAGE_MANAGER: <package_manager_name>
+DEPENDENCY_FILE: <exact_filename>
+PACKAGE_MANAGER: <package_manager_name>
 CONFIDENCE: <high/medium/low>
 LANGUAGE: <programming_language>
-FRAMEWORK: <framework_if_applicable>
-IS_MONOREPO: <yes/no>
 REASONING: <brief explanation>
-"""
+
+Important: Focus on identifying the MAIN dependency file, not lock files."""
 
         try:
             self.logger.info("Analyzing repository with AI...")
@@ -182,10 +196,12 @@ REASONING: <brief explanation>
             for line in lines:
                 if ':' in line:
                     key, value = line.split(':', 1)
-                    key = key.strip().lower().replace('_', '')
+                    key = key.strip().lower().replace('_', '').replace('-', '')
                     value = value.strip()
 
-                    if 'package' in key or 'manager' in key:
+                    if 'dependency' in key and 'file' in key:
+                        result['dependency_file'] = value
+                    elif 'package' in key or 'manager' in key:
                         result['package_manager'] = value.lower()
                     elif 'confidence' in key:
                         result['confidence'] = value.lower()
@@ -193,12 +209,11 @@ REASONING: <brief explanation>
                         result['language'] = value
                     elif 'framework' in key:
                         result['framework'] = value
-                    elif 'monorepo' in key:
-                        result['is_monorepo'] = value.lower() == 'yes'
                     elif 'reasoning' in key:
                         result['reasoning'] = value
 
-            if 'package_manager' in result:
+            # Must have either dependency_file or package_manager
+            if 'dependency_file' in result or 'package_manager' in result:
                 return result
 
         except Exception as e:
