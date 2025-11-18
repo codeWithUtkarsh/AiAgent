@@ -4,9 +4,10 @@ An intelligent AI-powered backend application that automatically detects outdate
 
 ## Features
 
-- **Automatic Package Manager Detection**: Supports npm, yarn, pnpm, pip, poetry, pipenv, cargo, and more
+- **AI-Driven Package Manager Detection**: Uses AI to detect and work with ANY dependency file format without hardcoded logic
+- **MCP Web Search Integration**: Real-time package version detection using Model Context Protocol (MCP) and web search
 - **Intelligent Dependency Analysis**: Uses Anthropic's Claude AI to analyze updates and potential breaking changes
-- **Automated Updates**: Updates packages to their latest versions
+- **Automated Updates**: Updates packages to their latest versions with real-time version data
 - **Pull Request Creation**: Automatically creates PRs with comprehensive, AI-generated descriptions
 - **RESTful API**: Easy-to-use REST API for integration
 - **Comprehensive Logging**: Detailed logs for debugging each step of the process
@@ -26,30 +27,44 @@ An intelligent AI-powered backend application that automatically detects outdate
 │   Service       │
 └────────┬────────┘
          │
-    ┌────┴────┬────────────┬──────────────┐
-    ▼         ▼            ▼              ▼
-┌────────┐ ┌──────┐ ┌──────────┐ ┌─────────────┐
-│  Git   │ │GitHub│ │Anthropic │ │  Package    │
-│Service │ │ API  │ │   AI     │ │  Managers   │
-└────────┘ └──────┘ └──────────┘ └─────────────┘
+    ┌────┴────┬────────────┬──────────────┬──────────────┐
+    ▼         ▼            ▼              ▼              ▼
+┌────────┐ ┌──────┐ ┌──────────┐ ┌─────────────┐ ┌──────────┐
+│  Git   │ │GitHub│ │Anthropic │ │  Generic    │ │   MCP    │
+│Service │ │ API  │ │   AI     │ │  Package    │ │WebSearch │
+│        │ │      │ │          │ │  Manager    │ │ (stdio)  │
+└────────┘ └──────┘ └──────────┘ └──────┬──────┘ └──────────┘
+                                        │
+                                        ▼
+                                ┌───────────────┐
+                                │ open-websearch│
+                                │  MCP Server   │
+                                │  (Real-time   │
+                                │ Web Search)   │
+                                └───────────────┘
 ```
 
 ## Supported Package Managers
 
-- **JavaScript/Node.js**: npm, yarn, pnpm
-- **Python**: pip, poetry, pipenv
-- **Rust**: cargo
-- **Java**: maven, gradle (coming soon)
-- **PHP**: composer (coming soon)
-- **Go**: go modules (coming soon)
+This application uses an **AI-driven Generic Package Manager** that can work with ANY dependency file format without hardcoded logic. It automatically detects and handles:
+
+- **JavaScript/Node.js**: package.json (npm, yarn, pnpm)
+- **Python**: requirements.txt, pyproject.toml, Pipfile, setup.py
+- **Rust**: Cargo.toml
+- **Ruby**: Gemfile
+- **PHP**: composer.json
+- **Go**: go.mod
+- **Java**: pom.xml, build.gradle
+- **And ANY other dependency file format** - the AI adapts automatically!
 
 ## Installation
 
 ### Prerequisites
 
-- Python 3.11+
-- Git
-- Package managers you want to support (npm, pip, cargo, etc.)
+- **Python 3.11+** - For running the FastAPI backend
+- **Node.js 18+** and **npm 8+** - Required for MCP WebSearch server
+- **Git** - For repository operations
+- **Internet connection** - For MCP web search to fetch real-time package versions
 
 ### Setup
 
@@ -65,12 +80,20 @@ An intelligent AI-powered backend application that automatically detects outdate
    source venv/bin/activate  # On Windows: venv\Scripts\activate
    ```
 
-3. **Install dependencies**:
+3. **Install Python dependencies**:
    ```bash
    pip install -r requirements.txt
    ```
 
-4. **Configure environment variables**:
+4. **Verify Node.js installation** (required for MCP WebSearch):
+   ```bash
+   node --version  # Should be 18.0.0 or higher
+   npm --version   # Should be 8.0.0 or higher
+   ```
+
+   If Node.js is not installed, download it from [nodejs.org](https://nodejs.org/)
+
+5. **Configure environment variables**:
    ```bash
    cp .env.example .env
    ```
@@ -106,6 +129,45 @@ An intelligent AI-powered backend application that automatically detects outdate
 2. Generate new token with these scopes:
    - `repo` (Full control of private repositories)
    - `workflow` (Update GitHub Action workflows)
+
+## MCP Integration for Real-time Version Detection
+
+This application uses the **Model Context Protocol (MCP)** with the **open-websearch** MCP server to fetch real-time package version information from the web.
+
+### How It Works
+
+1. **MCP Client**: The Python backend includes an MCP client (via the `mcp` package)
+2. **MCP Server**: Connects to `open-websearch` MCP server via stdio protocol
+3. **Web Search**: The MCP server performs real-time web searches across multiple search engines
+4. **Version Extraction**: AI extracts the latest version from search results
+5. **No API Keys**: The open-websearch server requires no API keys
+
+### MCP Server Details
+
+- **Server**: [open-websearch](https://github.com/Aas-ee/open-webSearch)
+- **Protocol**: Model Context Protocol (stdio transport)
+- **Installation**: Automatic via `npx open-websearch@latest`
+- **Search Engines**: Bing, DuckDuckGo, Brave, and more (no keys required)
+- **Site-specific queries**: Searches package registries (pypi.org, npmjs.com, crates.io, etc.)
+
+### What Happens When You Run the Application
+
+When checking for package updates, the system:
+
+```
+1. Python backend creates MCP client session
+2. Spawns open-websearch MCP server (via npx)
+3. Sends web_search request with query like "latest version fastapi site:pypi.org 2025"
+4. MCP server fetches real-time search results from the web
+5. Returns search results to Python backend
+6. AI (Claude) extracts the latest version number from results
+7. Validates the version is newer than current version
+8. Returns updated version information
+```
+
+### No Additional Setup Required
+
+The MCP server is automatically started when needed via `npx`, so no manual installation or configuration is required. Just ensure Node.js 18+ and npm 8+ are installed.
 
 ## Usage
 
@@ -264,14 +326,19 @@ while True:
 ## Workflow
 
 1. **Repository Cloning**: The agent clones the specified repository
-2. **Package Manager Detection**: Automatically detects the package manager (npm, pip, cargo, etc.)
-3. **Dependency Analysis**: Checks for outdated packages
-4. **AI Analysis**: Uses Claude to analyze potential breaking changes and risks
-5. **Package Updates**: Updates packages to their latest versions
-6. **Branch Creation**: Creates a new branch for the updates
-7. **Commit Changes**: Commits the updated dependency files
-8. **PR Description Generation**: Uses Claude AI to generate comprehensive PR description
-9. **Pull Request Creation**: Creates a PR on GitHub with the AI-generated description
+2. **AI-Powered Detection**: Uses Claude AI to detect the dependency file and package manager (works with ANY format)
+3. **Dependency Parsing**: AI parses the dependency file to extract current packages and versions
+4. **Real-time Version Check**:
+   - Connects to open-websearch MCP server via stdio
+   - Performs web search for each package (e.g., "latest version fastapi site:pypi.org 2025")
+   - AI extracts latest version from real-time search results
+   - Validates versions are newer than current
+5. **AI Analysis**: Uses Claude to analyze potential breaking changes and risks
+6. **Package Updates**: Updates packages to their latest versions
+7. **Branch Creation**: Creates a new branch for the updates
+8. **Commit Changes**: Commits the updated dependency files
+9. **PR Description Generation**: Uses Claude AI to generate comprehensive PR description
+10. **Pull Request Creation**: Creates a PR on GitHub with the AI-generated description
 
 ## Logging
 
@@ -342,11 +409,13 @@ All errors are logged and returned via the API with appropriate HTTP status code
 
 Contributions are welcome! Areas for improvement:
 
-- Add support for more package managers (Maven, Gradle, Go modules)
 - Implement webhook support for automatic updates
 - Add configuration for update policies (semver ranges, etc.)
 - Support for monorepos with multiple package managers
-- Add tests
+- Improve MCP integration and add fallback mechanisms
+- Add comprehensive test suite
+- Performance optimizations for MCP web search
+- Add support for private package registries
 
 ## License
 
@@ -360,6 +429,9 @@ For issues, questions, or contributions, please open an issue on GitHub.
 
 **Built with**:
 - [FastAPI](https://fastapi.tiangolo.com/) - Modern web framework
-- [Anthropic Claude](https://www.anthropic.com/) - AI-powered analysis
+- [Anthropic Claude](https://www.anthropic.com/) - AI-powered analysis and package detection
+- [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) - Standard protocol for AI-tool integration
+- [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk) - Official Python MCP client
+- [open-websearch](https://github.com/Aas-ee/open-webSearch) - MCP server for real-time web search
 - [PyGithub](https://github.com/PyGithub/PyGithub) - GitHub API client
 - [GitPython](https://gitpython.readthedocs.io/) - Git operations
