@@ -178,61 +178,61 @@ Important:
         current_version: Optional[str]
     ) -> Optional[str]:
         """
-        Fetch latest version from package registry by scraping the registry page
+        Fetch latest version from package registry API with real-time data
         """
         import aiohttp
+        import json
 
-        # Build package registry URL
-        registry_urls = {
-            'python': f'https://pypi.org/project/{package_name}/',
-            'javascript': f'https://www.npmjs.com/package/{package_name}',
-            'typescript': f'https://www.npmjs.com/package/{package_name}',
-            'rust': f'https://crates.io/crates/{package_name}',
-            'go': f'https://pkg.go.dev/{package_name}',
-            'ruby': f'https://rubygems.org/gems/{package_name}',
-            'php': f'https://packagist.org/packages/{package_name}',
-            'java': f'https://mvnrepository.com/artifact/{package_name}',
+        # Build package registry API URLs (JSON endpoints for real-time data)
+        registry_api_urls = {
+            'python': f'https://pypi.org/pypi/{package_name}/json',
+            'javascript': f'https://registry.npmjs.org/{package_name}',
+            'typescript': f'https://registry.npmjs.org/{package_name}',
+            'rust': f'https://crates.io/api/v1/crates/{package_name}',
+            'ruby': f'https://rubygems.org/api/v1/gems/{package_name}.json',
+            'php': f'https://repo.packagist.org/p2/{package_name}.json',
         }
 
-        package_url = registry_urls.get(self.language.lower(), '')
+        api_url = registry_api_urls.get(self.language.lower())
 
-        if not package_url:
-            self.logger.warning(f"No registry URL configured for language: {self.language}")
+        if not api_url:
+            self.logger.warning(f"No registry API configured for language: {self.language}")
             return None
 
-        self.logger.info(f"Fetching latest version for {package_name} from {package_url}")
+        self.logger.info(f"Fetching latest version for {package_name} from {api_url}")
 
         try:
-            # Fetch actual HTML from the package registry
+            # Fetch real-time JSON data from package registry API
             timeout = aiohttp.ClientTimeout(total=15)
             async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(package_url) as response:
+                async with session.get(api_url) as response:
                     if response.status != 200:
-                        self.logger.warning(f"HTTP {response.status} for {package_url}")
+                        self.logger.warning(f"HTTP {response.status} for {api_url}")
                         return None
 
-                    html_content = await response.text()
-                    self.logger.info(f"Fetched {len(html_content)} bytes of HTML from {package_url}")
+                    json_data = await response.text()
+                    self.logger.info(f"Fetched {len(json_data)} bytes of JSON from {api_url}")
 
-            # Use AI to extract the latest version from the actual HTML
-            prompt = f"""You are looking at the LIVE HTML from a package registry page.
+            # Use AI to extract the latest version from the real-time JSON data
+            prompt = f"""You are looking at REAL-TIME JSON data from a package registry API.
 
-IMPORTANT: Extract the version from the HTML below, NOT from your training data.
+IMPORTANT: Extract the latest version from the JSON below. This is LIVE data from the registry.
 
 Package: {package_name}
 Language: {self.language}
 Current version: {current_version}
-Registry URL: {package_url}
+Registry API: {api_url}
 
-Here is the ACTUAL HTML from the registry (first 5000 characters):
-```html
-{html_content[:5000]}
+Here is the ACTUAL JSON from the registry API:
+```json
+{json_data[:8000]}
 ```
 
 Your task:
-1. Find the LATEST STABLE version number in the HTML above (NOT pre-release, NOT beta, NOT rc)
+1. Find the LATEST STABLE version number in the JSON (NOT pre-release, NOT beta, NOT rc, NOT alpha)
 2. The version MUST be NEWER than the current version: {current_version}
-3. Extract it from the HTML content, NOT from your training data
+3. Look for fields like "version", "latest", "dist-tags.latest", "info.version", "crate.max_version", etc.
+4. Extract from the JSON data above, this is REAL-TIME data
 
 Return ONLY the version number in this format:
 VERSION: x.y.z
@@ -242,6 +242,7 @@ VERSION: 1.4.2
 VERSION: 2.0.15
 
 Do not include 'v' prefix or any other text.
+If you cannot find a newer stable version, respond with: VERSION: NONE
 """
 
             message = self.ai_client.messages.create(
@@ -259,6 +260,11 @@ Do not include 'v' prefix or any other text.
             for line in response_text.split('\n'):
                 if 'VERSION:' in line:
                     version = line.split('VERSION:')[1].strip()
+
+                    if version == 'NONE' or not version:
+                        self.logger.info(f"No newer version found for {package_name}")
+                        return None
+
                     version = version.lstrip('v')  # Remove v prefix if present
 
                     # Validate that it's actually newer
