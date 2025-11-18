@@ -178,12 +178,12 @@ Important:
         current_version: Optional[str]
     ) -> Optional[str]:
         """
-        Use web search (MCP-style) to find the latest version with real-time data from the web
+        Use MCP WebSearch (open-websearch) to find the latest version with real-time web data
         """
-        import aiohttp
-        import urllib.parse
-
         try:
+            from mcp import ClientSession, StdioServerParameters
+            from mcp.client.stdio import stdio_client
+
             # Build search query for the package registry
             registry_sites = {
                 'python': 'site:pypi.org',
@@ -196,49 +196,66 @@ Important:
             }
 
             site_filter = registry_sites.get(self.language.lower(), '')
-            search_query = f"latest version {package_name} {site_filter}"
-            encoded_query = urllib.parse.quote(search_query)
+            search_query = f"latest version {package_name} {site_filter} 2025"
 
-            # Use DuckDuckGo HTML search (no API key required)
-            search_url = f"https://html.duckduckgo.com/html/?q={encoded_query}"
+            self.logger.info(f"MCP Web searching for: {search_query}")
 
-            self.logger.info(f"Web searching for: {search_query}")
+            # Configure MCP server parameters for open-websearch
+            server_params = StdioServerParameters(
+                command="npx",
+                args=["open-websearch@latest"],
+                env=None
+            )
 
-            # Fetch search results
-            timeout = aiohttp.ClientTimeout(total=20)
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            }
+            # Connect to MCP server and perform search
+            search_results = ""
+            async with stdio_client(server_params) as (read, write):
+                async with ClientSession(read, write) as session:
+                    # Initialize the session
+                    await session.initialize()
 
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(search_url, headers=headers) as response:
-                    if response.status != 200:
-                        self.logger.warning(f"Search HTTP {response.status}")
-                        return None
+                    # Call the web_search tool
+                    result = await session.call_tool(
+                        "web_search",
+                        arguments={
+                            "query": search_query,
+                            "numResults": 5,
+                            "language": "en"
+                        }
+                    )
 
-                    search_html = await response.text()
-                    self.logger.info(f"Fetched {len(search_html)} bytes of search results")
+                    # Extract search results from MCP response
+                    if result and hasattr(result, 'content'):
+                        for content_block in result.content:
+                            if hasattr(content_block, 'text'):
+                                search_results += content_block.text
 
-            # Use AI to extract the latest version from web search results
-            prompt = f"""You are looking at REAL-TIME WEB SEARCH RESULTS for package version information.
+            self.logger.info(f"MCP search returned {len(search_results)} characters")
 
-IMPORTANT: Extract the latest version from the search results below. This is LIVE data from web search.
+            if not search_results:
+                self.logger.warning(f"No search results from MCP for {package_name}")
+                return None
+
+            # Use AI to extract the latest version from MCP web search results
+            prompt = f"""You are looking at REAL-TIME WEB SEARCH RESULTS from MCP web search.
+
+IMPORTANT: Extract the latest version from the search results below. This is LIVE data from the web.
 
 Package: {package_name}
 Language: {self.language}
 Current version: {current_version}
 Search query: {search_query}
 
-Here are the ACTUAL WEB SEARCH RESULTS (first 10000 characters):
-```html
-{search_html[:10000]}
+Here are the ACTUAL WEB SEARCH RESULTS:
+```
+{search_results[:12000]}
 ```
 
 Your task:
 1. Find the LATEST STABLE version number from the search results (NOT pre-release, NOT beta, NOT rc, NOT alpha)
 2. The version MUST be NEWER than the current version: {current_version}
 3. Look for version information from official package registry pages (pypi.org, npmjs.com, crates.io, etc.)
-4. Extract from the search results above - this is REAL-TIME web data
+4. Extract from the search results above - this is REAL-TIME web data from MCP
 
 Return ONLY the version number in this format:
 VERSION: x.y.z
@@ -275,7 +292,7 @@ If you cannot find a newer stable version, respond with: VERSION: NONE
 
                     # Validate that it's actually newer
                     if self._is_version_newer(current_version, version):
-                        self.logger.info(f"Found latest version via web search for {package_name}: {version}")
+                        self.logger.info(f"Found latest version via MCP web search for {package_name}: {version}")
                         return version
                     else:
                         self.logger.warning(
@@ -283,14 +300,11 @@ If you cannot find a newer stable version, respond with: VERSION: NONE
                         )
                         return None
 
-            self.logger.warning(f"Could not extract valid newer version from web search for {package_name}")
+            self.logger.warning(f"Could not extract valid newer version from MCP search for {package_name}")
             return None
 
-        except aiohttp.ClientTimeout:
-            self.logger.warning(f"Timeout during web search for {package_name}")
-            return None
         except Exception as e:
-            self.logger.error(f"Error finding latest version via web search for {package_name}: {e}")
+            self.logger.error(f"Error finding latest version via MCP web search for {package_name}: {e}")
             return None
 
     def _is_version_newer(self, current: Optional[str], latest: str) -> bool:
