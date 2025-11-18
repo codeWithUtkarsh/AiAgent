@@ -178,61 +178,67 @@ Important:
         current_version: Optional[str]
     ) -> Optional[str]:
         """
-        Fetch latest version from package registry API with real-time data
+        Use web search (MCP-style) to find the latest version with real-time data from the web
         """
         import aiohttp
-        import json
-
-        # Build package registry API URLs (JSON endpoints for real-time data)
-        registry_api_urls = {
-            'python': f'https://pypi.org/pypi/{package_name}/json',
-            'javascript': f'https://registry.npmjs.org/{package_name}',
-            'typescript': f'https://registry.npmjs.org/{package_name}',
-            'rust': f'https://crates.io/api/v1/crates/{package_name}',
-            'ruby': f'https://rubygems.org/api/v1/gems/{package_name}.json',
-            'php': f'https://repo.packagist.org/p2/{package_name}.json',
-        }
-
-        api_url = registry_api_urls.get(self.language.lower())
-
-        if not api_url:
-            self.logger.warning(f"No registry API configured for language: {self.language}")
-            return None
-
-        self.logger.info(f"Fetching latest version for {package_name} from {api_url}")
+        import urllib.parse
 
         try:
-            # Fetch real-time JSON data from package registry API
-            timeout = aiohttp.ClientTimeout(total=15)
+            # Build search query for the package registry
+            registry_sites = {
+                'python': 'site:pypi.org',
+                'javascript': 'site:npmjs.com',
+                'typescript': 'site:npmjs.com',
+                'rust': 'site:crates.io',
+                'ruby': 'site:rubygems.org',
+                'php': 'site:packagist.org',
+                'go': 'site:pkg.go.dev',
+            }
+
+            site_filter = registry_sites.get(self.language.lower(), '')
+            search_query = f"latest version {package_name} {site_filter}"
+            encoded_query = urllib.parse.quote(search_query)
+
+            # Use DuckDuckGo HTML search (no API key required)
+            search_url = f"https://html.duckduckgo.com/html/?q={encoded_query}"
+
+            self.logger.info(f"Web searching for: {search_query}")
+
+            # Fetch search results
+            timeout = aiohttp.ClientTimeout(total=20)
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+
             async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(api_url) as response:
+                async with session.get(search_url, headers=headers) as response:
                     if response.status != 200:
-                        self.logger.warning(f"HTTP {response.status} for {api_url}")
+                        self.logger.warning(f"Search HTTP {response.status}")
                         return None
 
-                    json_data = await response.text()
-                    self.logger.info(f"Fetched {len(json_data)} bytes of JSON from {api_url}")
+                    search_html = await response.text()
+                    self.logger.info(f"Fetched {len(search_html)} bytes of search results")
 
-            # Use AI to extract the latest version from the real-time JSON data
-            prompt = f"""You are looking at REAL-TIME JSON data from a package registry API.
+            # Use AI to extract the latest version from web search results
+            prompt = f"""You are looking at REAL-TIME WEB SEARCH RESULTS for package version information.
 
-IMPORTANT: Extract the latest version from the JSON below. This is LIVE data from the registry.
+IMPORTANT: Extract the latest version from the search results below. This is LIVE data from web search.
 
 Package: {package_name}
 Language: {self.language}
 Current version: {current_version}
-Registry API: {api_url}
+Search query: {search_query}
 
-Here is the ACTUAL JSON from the registry API:
-```json
-{json_data[:8000]}
+Here are the ACTUAL WEB SEARCH RESULTS (first 10000 characters):
+```html
+{search_html[:10000]}
 ```
 
 Your task:
-1. Find the LATEST STABLE version number in the JSON (NOT pre-release, NOT beta, NOT rc, NOT alpha)
+1. Find the LATEST STABLE version number from the search results (NOT pre-release, NOT beta, NOT rc, NOT alpha)
 2. The version MUST be NEWER than the current version: {current_version}
-3. Look for fields like "version", "latest", "dist-tags.latest", "info.version", "crate.max_version", etc.
-4. Extract from the JSON data above, this is REAL-TIME data
+3. Look for version information from official package registry pages (pypi.org, npmjs.com, crates.io, etc.)
+4. Extract from the search results above - this is REAL-TIME web data
 
 Return ONLY the version number in this format:
 VERSION: x.y.z
@@ -269,7 +275,7 @@ If you cannot find a newer stable version, respond with: VERSION: NONE
 
                     # Validate that it's actually newer
                     if self._is_version_newer(current_version, version):
-                        self.logger.info(f"Found latest version for {package_name}: {version}")
+                        self.logger.info(f"Found latest version via web search for {package_name}: {version}")
                         return version
                     else:
                         self.logger.warning(
@@ -277,14 +283,14 @@ If you cannot find a newer stable version, respond with: VERSION: NONE
                         )
                         return None
 
-            self.logger.warning(f"Could not extract valid newer version for {package_name}")
+            self.logger.warning(f"Could not extract valid newer version from web search for {package_name}")
             return None
 
         except aiohttp.ClientTimeout:
-            self.logger.warning(f"Timeout fetching version for {package_name}")
+            self.logger.warning(f"Timeout during web search for {package_name}")
             return None
         except Exception as e:
-            self.logger.error(f"Error finding latest version for {package_name}: {e}")
+            self.logger.error(f"Error finding latest version via web search for {package_name}: {e}")
             return None
 
     def _is_version_newer(self, current: Optional[str], latest: str) -> bool:
