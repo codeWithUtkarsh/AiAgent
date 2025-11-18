@@ -201,10 +201,19 @@ Important:
             self.logger.info(f"MCP Web searching for: {search_query}")
 
             # Configure MCP server parameters for open-websearch
+            # Set environment variables to suppress non-JSON output on stdout
+            import os
+            mcp_env = os.environ.copy()
+            mcp_env.update({
+                "SILENT": "true",
+                "LOG_LEVEL": "error",
+                "NODE_ENV": "production"
+            })
+
             server_params = StdioServerParameters(
                 command="npx",
-                args=["open-websearch@latest"],
-                env=None
+                args=["--yes", "open-websearch@latest"],
+                env=mcp_env
             )
 
             # Connect to MCP server and perform search
