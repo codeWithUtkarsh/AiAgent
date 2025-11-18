@@ -203,16 +203,36 @@ Important:
         self.logger.info(f"Fetching latest version for {package_name} from {package_url}")
 
         try:
-            # Use AI to extract the latest version from HTML
-            prompt = f"""Extract the LATEST version number from this package registry website.
+            # Fetch actual HTML from the package registry
+            timeout = aiohttp.ClientTimeout(total=15)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(package_url) as response:
+                    if response.status != 200:
+                        self.logger.warning(f"HTTP {response.status} for {package_url}")
+                        return None
+
+                    html_content = await response.text()
+                    self.logger.info(f"Fetched {len(html_content)} bytes of HTML from {package_url}")
+
+            # Use AI to extract the latest version from the actual HTML
+            prompt = f"""You are looking at the LIVE HTML from a package registry page.
+
+IMPORTANT: Extract the version from the HTML below, NOT from your training data.
 
 Package: {package_name}
-Package URL: {package_url}
 Language: {self.language}
 Current version: {current_version}
+Registry URL: {package_url}
 
-Find the latest stable version number (NOT pre-release, NOT beta, NOT rc).
-The version should be NEWER than the current version {current_version}.
+Here is the ACTUAL HTML from the registry (first 5000 characters):
+```html
+{html_content[:5000]}
+```
+
+Your task:
+1. Find the LATEST STABLE version number in the HTML above (NOT pre-release, NOT beta, NOT rc)
+2. The version MUST be NEWER than the current version: {current_version}
+3. Extract it from the HTML content, NOT from your training data
 
 Return ONLY the version number in this format:
 VERSION: x.y.z
