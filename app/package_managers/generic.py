@@ -203,25 +203,13 @@ Important:
         self.logger.info(f"Fetching latest version for {package_name} from {package_url}")
 
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(package_url, timeout=aiohttp.ClientTimeout(total=10)) as response:
-                    if response.status != 200:
-                        self.logger.warning(f"Failed to fetch {package_url}: HTTP {response.status}")
-                        return None
-
-                    html = await response.text()
-
             # Use AI to extract the latest version from HTML
-            prompt = f"""Extract the LATEST STABLE version number from this package registry page HTML.
+            prompt = f"""Extract the LATEST version number from this package registry website.
 
 Package: {package_name}
+Package URL: {package_url}
 Language: {self.language}
 Current version: {current_version}
-
-HTML content (first 3000 chars):
-```
-{html[:3000]}
-```
 
 Find the latest stable version number (NOT pre-release, NOT beta, NOT rc).
 The version should be NEWER than the current version {current_version}.
@@ -262,13 +250,6 @@ Do not include 'v' prefix or any other text.
                             f"AI returned {version} but it's not newer than {current_version}"
                         )
                         return None
-
-            # Try to extract version with regex as fallback
-            version_match = re.search(r'(\d+\.\d+\.\d+)', response_text)
-            if version_match:
-                version = version_match.group(1)
-                if self._is_version_newer(current_version, version):
-                    return version
 
             self.logger.warning(f"Could not extract valid newer version for {package_name}")
             return None
