@@ -1,9 +1,11 @@
 import subprocess
 import re
+import json
 from pathlib import Path
 from typing import List, Optional, Tuple
 from app.models import PackageInfo, PackageManager
 from app.package_managers.base import BasePackageManager
+from app.mcp_client import get_mcp_client
 
 
 class PipPackageManager(BasePackageManager):
@@ -27,55 +29,62 @@ class PipPackageManager(BasePackageManager):
             return PackageManager.PIP
 
     async def get_outdated_packages(self) -> List[PackageInfo]:
-        """Get outdated pip packages"""
-        self.logger.info("Checking for outdated pip packages")
+        """
+        Get outdated pip packages using MCP server
+
+        Uses the MCP package version server to check for outdated packages.
+        This provides a more reliable and consistent way to check package versions
+        compared to running pip commands.
+        """
+        self.logger.info("Checking for outdated pip packages using MCP server")
 
         try:
-            # Install dependencies first if requirements.txt exists
-            if self.file_exists("requirements.txt"):
-                subprocess.run(
-                    ["pip", "install", "-r", "requirements.txt"],
-                    cwd=self.repo_path,
-                    capture_output=True,
-                    timeout=300
-                )
-
-            # Run pip list --outdated
-            result = subprocess.run(
-                ["pip", "list", "--outdated", "--format=json"],
-                cwd=self.repo_path,
-                capture_output=True,
-                text=True,
-                timeout=60
-            )
-
-            if result.returncode != 0:
-                self.logger.error(f"pip list --outdated failed: {result.stderr}")
+            # Parse requirements.txt to get current packages
+            if not self.file_exists("requirements.txt"):
+                self.logger.warning("requirements.txt not found")
                 return []
 
-            import json
-            outdated_data = json.loads(result.stdout)
+            requirements_content = self.read_file("requirements.txt")
+            if not requirements_content:
+                self.logger.warning("Could not read requirements.txt")
+                return []
+
             packages = []
+            mcp_client = await get_mcp_client()
 
-            for pkg in outdated_data:
-                packages.append(PackageInfo(
-                    name=pkg["name"],
-                    current_version=pkg["version"],
-                    latest_version=pkg["latest_version"],
-                    is_outdated=True
-                ))
+            # Parse each line of requirements.txt
+            for line in requirements_content.splitlines():
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
 
-            self.logger.info(f"Found {len(packages)} outdated packages")
+                # Extract package name and version
+                # Handle formats like: package==1.0.0, package>=1.0.0, package~=1.0.0, package
+                match = re.match(r'^([a-zA-Z0-9\-_\.]+)\s*([=<>~!]+)?\s*(.+)?', line)
+                if match:
+                    pkg_name = match.group(1)
+                    current_version = match.group(3) if match.group(3) else None
+
+                    # Check latest version via MCP
+                    latest_version = await mcp_client.check_pypi_package(pkg_name)
+
+                    if latest_version and current_version:
+                        # Clean version string
+                        current_clean = current_version.strip()
+                        if current_clean != latest_version:
+                            packages.append(PackageInfo(
+                                name=pkg_name,
+                                current_version=current_clean,
+                                latest_version=latest_version,
+                                is_outdated=True
+                            ))
+                            self.logger.info(f"Found outdated package: {pkg_name} {current_clean} -> {latest_version}")
+
+            self.logger.info(f"Found {len(packages)} outdated packages via MCP")
             return packages
 
-        except subprocess.TimeoutExpired:
-            self.logger.error("pip command timed out")
-            return []
-        except FileNotFoundError:
-            self.logger.error("pip command not found")
-            return []
         except Exception as e:
-            self.logger.error(f"Error checking outdated packages: {e}")
+            self.logger.error(f"Error checking outdated packages via MCP: {e}")
             return []
 
     async def update_packages(

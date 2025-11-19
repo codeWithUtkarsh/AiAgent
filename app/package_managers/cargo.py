@@ -1,5 +1,6 @@
 import subprocess
 import toml
+import json
 from pathlib import Path
 from typing import List, Optional, Tuple
 from app.models import PackageInfo, PackageManager
@@ -18,7 +19,12 @@ class CargoPackageManager(BasePackageManager):
         return PackageManager.CARGO
 
     async def get_outdated_packages(self) -> List[PackageInfo]:
-        """Get outdated cargo packages"""
+        """
+        Get outdated cargo packages
+
+        Note: MCP server does not support Cargo packages, so this falls back
+        to using cargo outdated command.
+        """
         self.logger.info("Checking for outdated cargo packages")
 
         try:
@@ -33,10 +39,9 @@ class CargoPackageManager(BasePackageManager):
 
             if result.returncode != 0:
                 # cargo outdated might not be installed, try alternative
-                self.logger.warning("cargo outdated not available, using cargo tree")
+                self.logger.warning("cargo outdated not available")
                 return []
 
-            import json
             outdated_data = json.loads(result.stdout)
             packages = []
 

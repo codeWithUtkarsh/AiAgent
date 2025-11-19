@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 from app.models import PackageInfo, PackageManager
 from app.package_managers.base import BasePackageManager
+from app.mcp_client import get_mcp_client
 
 
 class GoPackageManager(BasePackageManager):
@@ -55,9 +56,9 @@ class GoPackageManager(BasePackageManager):
             self.logger.error(f"Error parsing go.mod: {e}")
             return []
 
-    async def _get_latest_version_from_pkgdev(self, package_name: str) -> Optional[str]:
+    async def _get_latest_version_from_mcp(self, package_name: str) -> Optional[str]:
         """
-        Fetch the latest version of a Go package from pkg.go.dev
+        Fetch the latest version of a Go package using MCP server
 
         Args:
             package_name: Full package name (e.g., github.com/gin-gonic/gin)
@@ -66,62 +67,30 @@ class GoPackageManager(BasePackageManager):
             Latest version string or None if not found
         """
         try:
-            url = f"https://pkg.go.dev/{package_name}"
+            mcp_client = await get_mcp_client()
+            version = await mcp_client.check_go_package(package_name)
 
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as response:
-                    if response.status != 200:
-                        self.logger.warning(f"Failed to fetch {package_name}: HTTP {response.status}")
-                        return None
+            if version:
+                self.logger.debug(f"Found latest version for {package_name}: v{version}")
+                return version
+            else:
+                self.logger.warning(f"Could not find version for {package_name} via MCP")
+                return None
 
-                    html = await response.text()
-
-                    # Look for version in the HTML
-                    # pkg.go.dev shows versions in various formats, look for semantic version pattern
-                    # Usually in meta tags or version selectors
-                    version_patterns = [
-                        r'data-version="v([0-9]+\.[0-9]+\.[0-9]+[^"]*)"',
-                        r'Version: v([0-9]+\.[0-9]+\.[0-9]+[^\s<]*)',
-                        r'<span class="[^"]*Version[^"]*">v?([0-9]+\.[0-9]+\.[0-9]+[^<]*)</span>',
-                    ]
-
-                    for pattern in version_patterns:
-                        match = re.search(pattern, html)
-                        if match:
-                            version = match.group(1)
-                            self.logger.debug(f"Found latest version for {package_name}: v{version}")
-                            return version
-
-                    # Fallback: look for any version-like string in meta tags
-                    meta_pattern = r'<meta[^>]*content="v?([0-9]+\.[0-9]+\.[0-9]+[^"]*)"'
-                    matches = re.findall(meta_pattern, html)
-                    if matches:
-                        # Take the first one that looks like a semantic version
-                        for version in matches:
-                            if re.match(r'^[0-9]+\.[0-9]+\.[0-9]+', version):
-                                self.logger.debug(f"Found version in meta tag for {package_name}: v{version}")
-                                return version
-
-                    self.logger.warning(f"Could not find version for {package_name} in HTML")
-                    return None
-
-        except asyncio.TimeoutError:
-            self.logger.warning(f"Timeout fetching version for {package_name}")
-            return None
         except Exception as e:
             self.logger.error(f"Error fetching latest version for {package_name}: {e}")
             return None
 
     async def get_outdated_packages(self) -> List[PackageInfo]:
         """
-        Get outdated go packages by searching pkg.go.dev
+        Get outdated go packages using MCP server
 
         This method:
         1. Parses go.mod to get current dependencies
-        2. Searches pkg.go.dev for each package to find latest version
+        2. Uses MCP server to check each package's latest version
         3. Compares versions and returns outdated packages
         """
-        self.logger.info("Checking for outdated go packages via pkg.go.dev")
+        self.logger.info("Checking for outdated go packages via MCP server")
 
         try:
             # Parse go.mod to get current dependencies
@@ -139,8 +108,8 @@ class GoPackageManager(BasePackageManager):
             for package_name, current_version in dependencies:
                 self.logger.info(f"Checking {package_name} (current: v{current_version})")
 
-                # Fetch latest version from pkg.go.dev
-                latest_version = await self._get_latest_version_from_pkgdev(package_name)
+                # Fetch latest version from MCP server
+                latest_version = await self._get_latest_version_from_mcp(package_name)
 
                 if latest_version is None:
                     self.logger.warning(f"Could not determine latest version for {package_name}")

@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 from app.models import PackageInfo, PackageManager
 from app.package_managers.base import BasePackageManager
+from app.mcp_client import get_mcp_client
 
 
 class NpmPackageManager(BasePackageManager):
@@ -22,77 +23,74 @@ class NpmPackageManager(BasePackageManager):
         else:
             return PackageManager.NPM
 
-    async def get_outdated_packages(self) -> List[PackageInfo]:
-        """Get outdated npm packages"""
-        self.logger.info("Checking for outdated npm packages")
+    async def _get_outdated_packages_via_mcp(self) -> List[PackageInfo]:
+        """
+        Get outdated npm packages using MCP server
+
+        This is a fallback method when npm command is not available
+        or when we want to use the MCP server directly
+        """
+        self.logger.info("Checking for outdated npm packages via MCP server")
 
         try:
-            # First, read package.json to get current version specifiers
+            # Read package.json to get current dependencies
             package_json_path = self.repo_path / "package.json"
-            current_versions = {}
-
-            if package_json_path.exists():
-                with open(package_json_path, 'r') as f:
-                    package_data = json.load(f)
-
-                    # Get versions from dependencies
-                    if "dependencies" in package_data:
-                        for name, version in package_data["dependencies"].items():
-                            current_versions[name] = version
-
-                    # Get versions from devDependencies
-                    if "devDependencies" in package_data:
-                        for name, version in package_data["devDependencies"].items():
-                            if name not in current_versions:
-                                current_versions[name] = version
-
-            # Run npm outdated --json
-            result = subprocess.run(
-                ["npm", "outdated", "--json"],
-                cwd=self.repo_path,
-                capture_output=True,
-                text=True,
-                timeout=60
-            )
-
-            # npm outdated returns non-zero exit code when there are outdated packages
-            if not result.stdout:
-                self.logger.info("No outdated packages found")
+            if not package_json_path.exists():
+                self.logger.warning("package.json not found")
                 return []
 
-            outdated_data = json.loads(result.stdout)
+            with open(package_json_path, 'r') as f:
+                package_data = json.load(f)
+
             packages = []
+            mcp_client = await get_mcp_client()
 
-            for name, info in outdated_data.items():
-                # Try to get current version from multiple sources
-                current_version = (
-                    info.get("current") or  # From npm outdated
-                    current_versions.get(name) or  # From package.json
-                    "unknown"
-                )
+            # Check dependencies
+            if "dependencies" in package_data:
+                for name, version_spec in package_data["dependencies"].items():
+                    latest_version = await mcp_client.check_npm_package(name)
+                    if latest_version:
+                        # Extract current version from version spec (remove ^ or ~ or other prefixes)
+                        current_version = version_spec.lstrip('^~>=<')
+                        if current_version != latest_version:
+                            packages.append(PackageInfo(
+                                name=name,
+                                current_version=current_version,
+                                latest_version=latest_version,
+                                is_outdated=True
+                            ))
 
-                packages.append(PackageInfo(
-                    name=name,
-                    current_version=current_version,
-                    latest_version=info.get("latest", "unknown"),
-                    is_outdated=True
-                ))
+            # Check devDependencies
+            if "devDependencies" in package_data:
+                for name, version_spec in package_data["devDependencies"].items():
+                    latest_version = await mcp_client.check_npm_package(name)
+                    if latest_version:
+                        current_version = version_spec.lstrip('^~>=<')
+                        if current_version != latest_version:
+                            packages.append(PackageInfo(
+                                name=name,
+                                current_version=current_version,
+                                latest_version=latest_version,
+                                is_outdated=True
+                            ))
 
-            self.logger.info(f"Found {len(packages)} outdated packages")
+            self.logger.info(f"Found {len(packages)} outdated packages via MCP")
             return packages
 
-        except subprocess.TimeoutExpired:
-            self.logger.error("npm outdated command timed out")
-            return []
-        except json.JSONDecodeError:
-            self.logger.error("Failed to parse npm outdated output")
-            return []
-        except FileNotFoundError:
-            self.logger.error("npm command not found")
-            return []
         except Exception as e:
-            self.logger.error(f"Error checking outdated packages: {e}")
+            self.logger.error(f"Error checking outdated packages via MCP: {e}")
             return []
+
+    async def get_outdated_packages(self) -> List[PackageInfo]:
+        """
+        Get outdated npm packages using MCP server
+
+        Uses the MCP package version server to check for outdated packages.
+        This provides a more reliable and consistent way to check package versions
+        compared to running npm commands.
+        """
+        self.logger.info("Checking for outdated npm packages using MCP server")
+        return await self._get_outdated_packages_via_mcp()
 
     async def update_packages(
         self,

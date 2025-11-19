@@ -78,6 +78,14 @@ async def shutdown_event():
     """Shutdown event handler"""
     logger.info("AI Dependency Update Agent Shutting Down")
 
+    # Close MCP client if it's running
+    try:
+        from app.mcp_client import close_mcp_client
+        await close_mcp_client()
+        logger.info("MCP client closed successfully")
+    except Exception as e:
+        logger.warning(f"Error closing MCP client: {e}")
+
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request, exc):
